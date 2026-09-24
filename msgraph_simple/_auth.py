@@ -262,8 +262,9 @@ async def exchange_code(
 
 
 def _msal_code(detail: str) -> str:
-    from ._errors import code_for_exception
-    return code_for_exception(GraphError(0, "authenticationFailed", detail))
+    """Classify MSAL's error string. Anything unrecognised is still a sign-in failure."""
+    from ._errors import code_for_text
+    return code_for_text(detail) or "authenticationFailed"
 
 
 class _MsalCredential:

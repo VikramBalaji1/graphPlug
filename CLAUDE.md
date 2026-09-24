@@ -54,7 +54,8 @@ Support applicable authentication scenarios including:
 * On-behalf-of authentication
 
 Any `azure.core.credentials_async.AsyncTokenCredential` is accepted, so the scenarios this package
-does not construct itself are still a credential swap away.
+does not construct itself are reached through `GraphClient.from_credential`, which also adapts a
+synchronous credential onto a worker thread.
 
 Keep credential handling centralized.
 

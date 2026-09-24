@@ -10,7 +10,7 @@ import email.utils
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional
 
-__all__ = ["GraphError", "from_response", "code_for_exception", "flatten"]
+__all__ = ["GraphError", "from_response", "code_for_exception", "code_for_text", "flatten"]
 
 _MAX_BODY_CHARS = 2048
 _MAX_CHAIN_DEPTH = 8
@@ -114,17 +114,14 @@ def flatten(exception: BaseException) -> str:
     return " -- ".join(messages) or type(exception).__name__
 
 
-def code_for_exception(exception: BaseException) -> str:
-    """Map a non-HTTP failure onto one of the defined codes.
+def code_for_text(text: str) -> Optional[str]:
+    """Match an AADSTS number or OAuth error string, or return None.
 
-    Matched on AADSTS numbers and OAuth error strings rather than prose, which is localised and
-    reworded over time.
+    Matched on the numbers and machine-readable strings rather than on prose, which is localised
+    and reworded over time. Split out from ``code_for_exception`` because the MSAL token exchange
+    reports a failure as a string rather than as an exception, and wrapping that string in a
+    GraphError just to classify it made the classifier return the wrapper's own placeholder code.
     """
-    if isinstance(exception, GraphError):
-        return exception.code
-
-    text = flatten(exception)
-
     # 65004 is an active refusal; 65001 is merely the absence of a consent grant.
     if "AADSTS65004" in text:
         return "signInDeclined"
@@ -134,6 +131,18 @@ def code_for_exception(exception: BaseException) -> str:
         return "signInTimeout"
     if "authorization_declined" in text or "access_denied" in text:
         return "signInDeclined"
+    return None
+
+
+def code_for_exception(exception: BaseException) -> str:
+    """Map a non-HTTP failure onto one of the defined codes."""
+    if isinstance(exception, GraphError):
+        return exception.code
+
+    text = flatten(exception)
+    matched = code_for_text(text)
+    if matched:
+        return matched
 
     name = type(exception).__name__
     if name in ("TimeoutException", "ConnectTimeout", "ReadTimeout", "PoolTimeout", "TimeoutError"):

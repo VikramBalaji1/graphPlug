@@ -460,6 +460,12 @@ Failures with no HTTP response use `status: 0` and a package-defined code:
 > `"DeviceCodeCredential authentication failed: "`. Reading only the top message collapsed every
 > delegated failure into `authenticationFailed`. Codes are matched on AADSTS numbers and OAuth
 > error strings across the whole chain, never on prose — prose is localised and reworded.
+>
+> The same collapse reappeared on the browser flow and went unnoticed until that path was first
+> tested. MSAL reports a refusal as a *string*, not an exception, and the classifier was being
+> handed `GraphError(0, "authenticationFailed", detail)` to inspect — whereupon it returned that
+> placeholder code, because its first branch trusts a `GraphError`'s own code. Matching is now
+> `code_for_text`, which takes the string, and `code_for_exception` is a thin wrapper over it.
 
 ### Logging
 
@@ -476,7 +482,7 @@ Each is a decision, not an oversight. Each has a trigger.
 | Omitted | Why | Add when |
 |---|---|---|
 | Persistent token cache | No credential material at rest, identical in a container (D7) | Repeated CLI runs make re-prompting tiresome enough to accept a refresh token on disk |
-| Certificate / managed-identity / OBO auth | `azure-identity` ships all three and any credential is accepted, so they are a constructor away rather than a feature | Deploying to Azure (managed identity), or moving off shared secrets (certificate) |
+| Certificate / managed-identity / OBO *constructors* | `azure-identity` ships all three, and `from_credential` takes any of them, so a named constructor each would add surface without adding capability | A flow needs setup this package could do better than the caller passing a credential |
 | ROPC (username/password) | Breaks under MFA and Conditional Access; stores user passwords | Effectively never; device code covers the headless case properly |
 | Typed response models | Generic JSON reaches every `v1.0` and `beta` endpoint on day one (D9) | Never — anyone wanting typed builders should take `msgraph-sdk` if it ever resolves |
 | A sync surface | Async is the safe-concurrency choice (D3), and `asyncio.run` is one line | Enough callers are in sync codebases to justify a generated sync mirror |
@@ -494,7 +500,7 @@ Each is a decision, not an oversight. Each has a trigger.
 package's own. The seam is `httpx.MockTransport`, wrapped by the **real** `msgraph-core`
 middleware, so tests exercise the same retry and redirect path production does (D11).
 
-**151 tests**, in seven files:
+**172 tests at 94% line coverage**, in eight files:
 
 | File | Covers |
 |---|---|
@@ -504,6 +510,7 @@ middleware, so tests exercise the same retry and redirect path production does (
 | `test_resources.py` | The exact `sendMail` and `event` payloads, field by field. This is where bugs would otherwise hide |
 | `test_files_teams_users.py` | Drive addressing by path and by id, that a large upload still reaches `createUploadSession`, the `chatMessage` shape, and that `ConsistencyLevel` is re-sent on page two |
 | `test_signin.py` | The two-phase orchestration: the code returns without waiting; a sign-in that fails before issuing a code does not hang; cancellation; PKCE conformance; the verifier never appearing in the authorize URL; `state` mismatch |
+| `test_redirect_and_construction.py` | The parts of sign-in needing no tenant: the loopback listener against real sockets, the PKCE code exchange over a stubbed MSAL, and every way of building a client |
 | `test_errors_and_logging.py` | Graph error JSON → `GraphError`, `Retry-After` in both formats, chain flattening, the code table, and that no token, secret or header reaches a log line |
 
 **Live tests** need a tenant and are skipped without one, so a clean checkout never requires

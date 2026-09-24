@@ -105,8 +105,8 @@ Choosing wrong is how a script ends up with far more reach than intended.
 **delegated** permission reads only the signed-in person's mail.
 
 Supported sign-ins: client secret, device code, and authorization code with PKCE. Certificate,
-managed identity and on-behalf-of are a credential swap away — `azure-identity` ships them all and
-nothing here constrains which you pass.
+managed identity and on-behalf-of go through `GraphClient.from_credential(...)`, which takes any
+`azure-identity` credential — sync or async — and is the reason those flows need no support here.
 
 ---
 
@@ -164,7 +164,7 @@ addresses. Headers, bodies and credential material are never logged.
 
 ```bash
 pip install -e .
-python -m unittest discover -s tests     # 151 tests
+python -m unittest discover -s tests     # 172 tests
 python -m build --wheel
 ```
 
@@ -174,10 +174,10 @@ No container, no compiler, no platform-specific build.
 
 ## Status
 
-The package is complete and tested. **151 tests**, covering the middleware contract, request
-construction, paging, batching, file round-trips, the exact paths and payloads all five resources
-build, the error taxonomy, concurrency bounds, the sign-in orchestration, the drive addressing
-rules and the logger.
+The package is complete and tested. **172 tests at 94% line coverage**, covering the middleware
+contract, request construction, paging, batching, file round-trips, the exact paths and payloads
+all five resources build, the error taxonomy, concurrency bounds, the sign-in orchestration, the
+loopback redirect listener, the drive addressing rules and the logger.
 
 ### What still needs a tenant
 

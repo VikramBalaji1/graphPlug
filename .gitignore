@@ -12,3 +12,7 @@ venv/
 .env
 *.pfx
 *.pem
+
+# Coverage output, when measuring locally.
+.coverage
+htmlcov/

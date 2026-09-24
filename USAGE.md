@@ -24,7 +24,7 @@ in exchange, concurrency is handled for you and never has to be written by hand.
 
 - [Install](#install)
 - [Pick an access model](#pick-an-access-model) — the one decision that matters
-- [Signing in](#signing-in)
+- [Signing in](#signing-in) — including any credential of your own
 - [Mail](#mail)
 - [Calendar and meetings](#calendar-and-meetings)
 - [Files](#files)
@@ -99,6 +99,34 @@ graph = GraphClient.app_only(
 
 Building a client contacts nothing. The first token is fetched on the first request, so a bad
 secret surfaces then rather than at construction.
+
+### Any other credential
+
+Managed identity, a certificate, on-behalf-of, a chained credential — anything `azure-identity`
+ships, and anything of your own with a `get_token`:
+
+```python
+from azure.identity.aio import ManagedIdentityCredential
+graph = GraphClient.from_credential(ManagedIdentityCredential())
+
+from azure.identity.aio import CertificateCredential
+graph = GraphClient.from_credential(
+    CertificateCredential(TENANT, CLIENT, certificate_path="app.pem")
+)
+```
+
+Nothing above the transport knows how the token was obtained, so these need no support here and
+behave identically once built.
+
+A **synchronous** credential works too and is run on a worker thread. Every flow has both
+spellings in `azure-identity` (`azure.identity` and `azure.identity.aio`), the async one is easy to
+miss, and without this the mistake would surface at the first request as an error about an
+un-awaited coroutine rather than about the credential.
+
+Scopes default to `.default`, which is what application-level credentials want. Pass `scopes=` for
+anything delegated.
+
+---
 
 ### Delegated, device code
 
@@ -613,6 +641,7 @@ an action on one item; `_collection_action` posts to one on the collection's own
 |---|---|
 | `GraphClient.app_only(tenant_id, client_id, client_secret, scopes=None, authority_host=None, max_concurrency=12)` | Application-level |
 | `GraphClient.from_env(**overrides)` | Application-level from `AZURE_*` |
+| `GraphClient.from_credential(credential, scopes=None, max_concurrency=12)` | Any azure-identity credential, sync or async |
 | `await GraphClient.device_code(tenant_id, client_id, scopes, authority_host=None)` | Delegated, blocks |
 | `await GraphClient.begin_device_code(...)` | Delegated, returns a `PendingSignIn` |
 | `await GraphClient.interactive(tenant_id, client_id, scopes, redirect_uri=..., timeout_seconds=900)` | Delegated, browser |

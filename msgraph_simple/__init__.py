@@ -22,6 +22,7 @@ reference first, and a few guarantees the boundary enforces rather than asking y
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 from types import TracebackType
 from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Type
@@ -146,6 +147,43 @@ class GraphClient:
 
         tenant, client, secret = (os.environ[name] for name in names)
         return cls.app_only(tenant, client, secret, **overrides)
+
+    @classmethod
+    def from_credential(
+        cls,
+        credential: Any,
+        scopes: Optional[Sequence[str]] = None,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+        _client: Any = None,
+    ) -> "GraphClient":
+        """Use any azure-identity credential, or anything else with a ``get_token``.
+
+        The extension point for the flows this package does not construct itself -- managed
+        identity, a certificate, on-behalf-of, a chained credential, or your own. They need no
+        support here because nothing above the transport knows how the token was obtained::
+
+            from azure.identity.aio import ManagedIdentityCredential
+            graph = GraphClient.from_credential(ManagedIdentityCredential())
+
+        A **synchronous** credential is accepted too and is run on a worker thread. Both spellings
+        exist in azure-identity for every flow, the async one is easy to miss, and getting it wrong
+        would otherwise fail at the first request with an error about an un-awaited coroutine
+        rather than about the credential.
+        """
+        if credential is None or not callable(getattr(credential, "get_token", None)):
+            raise GraphError(
+                0, "invalidRequest", "'credential' must have a callable 'get_token'"
+            )
+
+        if not inspect.iscoroutinefunction(credential.get_token):
+            credential = _auth._SyncCredentialAdapter(credential)
+
+        return cls(Transport(
+            credential,
+            scopes or (_auth.DEFAULT_SCOPE,),
+            max_concurrency=max_concurrency,
+            client=_client,
+        ))
 
     # ── delegated access ─────────────────────────────────────────────────────
 
