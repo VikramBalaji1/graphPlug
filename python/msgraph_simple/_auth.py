@@ -78,20 +78,27 @@ class _DeviceCodeSignIn:
     exactly what the second phase is waiting for.
     """
 
+    #: The credential class, overridable so the two-phase orchestration can be tested without Entra.
+    credential_class: Any = None
+
     def __init__(self, tenant_id: str, client_id: str, scopes: Sequence[str],
                  authority: Optional[str] = None) -> None:
-        from azure.identity import DeviceCodeCredential
-
         self.scopes = require_delegated_scopes(scopes)
-        self._issued: "asyncio.Future[Dict[str, Any]]" = asyncio.get_event_loop().create_future()
-        self._loop = asyncio.get_event_loop()
+        # get_running_loop, not get_event_loop: the latter is deprecated and, outside a running
+        # loop, creates one nobody will ever run.
+        self._loop = asyncio.get_running_loop()
+        self._issued: "asyncio.Future[Dict[str, Any]]" = self._loop.create_future()
         self._signed_in: Optional[asyncio.Task] = None
 
         options: Dict[str, Any] = {}
         if authority:
             options["authority"] = authority
 
-        self._credential = DeviceCodeCredential(
+        if self.credential_class is None:
+            from azure.identity import DeviceCodeCredential
+            type(self).credential_class = DeviceCodeCredential
+
+        self._credential = self.credential_class(
             client_id=client_id,
             tenant_id=tenant_id,
             prompt_callback=self._on_code,
