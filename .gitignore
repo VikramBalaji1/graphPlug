@@ -1,25 +1,11 @@
-# ── .NET ────────────────────────────────────────────────────────────────────
-bin/
-obj/
-*.user
-*.suo
-.vs/
-
-# NuGet output. The package is a build artefact, not a source file.
-*.nupkg
-*.snupkg
-
 # ── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.egg-info/
+build/
 dist/
 .venv/
 venv/
-
-# setuptools build output, at any depth.
-**/build/lib/
-**/build/bdist.*/
 
 # ── Local ───────────────────────────────────────────────────────────────────
 # Never commit credential material. Secrets are read from the environment.

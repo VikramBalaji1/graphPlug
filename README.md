@@ -155,9 +155,9 @@ addresses. Headers, bodies and credential material are never logged.
 ## Development
 
 ```bash
-pip install -e python/
-cd python && python -m unittest discover -s tests     # 103 tests
-python -m build --wheel python/
+pip install -e .
+python -m unittest discover -s tests     # 120 tests
+python -m build --wheel
 ```
 
 No container, no compiler, no platform-specific build.
@@ -166,9 +166,9 @@ No container, no compiler, no platform-specific build.
 
 ## Status
 
-The package is complete and tested. **103 tests**, covering the middleware contract, request
+The package is complete and tested. **120 tests**, covering the middleware contract, request
 construction, paging, batching, file round-trips, the exact mail and calendar payloads, the error
-taxonomy, concurrency bounds and the logger.
+taxonomy, concurrency bounds, the sign-in orchestration and the logger.
 
 ### What still needs a tenant
 
@@ -180,13 +180,12 @@ Everything above is verified without one. These cannot be:
 Set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` and the live checks become
 available.
 
-### The C# tree
+### History
 
-`src/`, `tests/` and `build/` hold the previous implementation: a C# core compiled to a native
-library and reached through a C ABI. Nothing consumes it any more. It is kept on this branch
-pending a decision to remove it, and its own tests still pass in isolation.
-[ARCHITECTURE.md](ARCHITECTURE.md) describes that design and remains worth reading for the
-reasoning behind rules the Python code inherited.
+An earlier version of this package was a C# core compiled to a native library and reached through
+a C ABI. It has been removed. [ARCHITECTURE.md](ARCHITECTURE.md) describes that design and is kept
+because the reasoning behind most of the rules here — the header allowlist, the error taxonomy, the
+upload thresholds, the batch chunking — was worked out there and the Python code inherited it.
 
 ---
 

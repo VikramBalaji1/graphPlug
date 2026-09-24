@@ -5,8 +5,8 @@
 A plug-and-play Python package for Microsoft Entra ID authentication and Microsoft Graph, with a
 resource layer that makes mail and calendar work one call rather than twenty lines of nested JSON.
 
-Python is the implementation. The C# tree under `src/` and `tests/` is the previous implementation,
-kept on this branch pending a decision; nothing consumes it.
+Pure Python, at the repository root. An earlier C# implementation has been removed;
+ARCHITECTURE.md describes it and is kept for the reasoning the Python code inherited.
 
 ## Tech Stack
 
@@ -20,34 +20,30 @@ Deliberately NOT msgraph-sdk: its dependency tree does not resolve in practice.
 ## Project Structure
 
 ```text
-python/
-├── msgraph_simple/
-│   ├── __init__.py       public surface: GraphClient, GraphError, PendingSignIn, Scopes
-│   ├── _http.py          the middleware pipeline, auth attachment, concurrency limit
-│   ├── _auth.py          credentials, PKCE, the loopback redirect listener
-│   ├── _request.py       URL building, OData, the response header allowlist
-│   ├── _errors.py        GraphError and the code taxonomy
-│   ├── _operations.py    paging, batching, download, the two upload strategies
-│   ├── _log.py           opt-in structured logging
-│   ├── _scopes.py        named permissions
-│   └── _resources/       base.py, mail.py, calendar.py
-└── tests/
+msgraph_simple/
+├── __init__.py       public surface: GraphClient, GraphError, PendingSignIn, Scopes
+├── _http.py          the middleware pipeline, auth attachment, concurrency limit
+├── _auth.py          credentials, PKCE, the loopback redirect listener
+├── _request.py       URL building, OData, the response header allowlist
+├── _errors.py        GraphError and the code taxonomy
+├── _operations.py    paging, batching, download, the two upload strategies
+├── _log.py           opt-in structured logging
+├── _scopes.py        named permissions
+└── _resources/       base.py, mail.py, calendar.py
 
+tests/     the suite
 samples/   runnable scripts
 docs/      troubleshooting
-
-src/ tests/ build/        the previous C# implementation; nothing consumes it
 ```
 
-Keep `python/msgraph_simple/` limited to the production code required by the package.
+Keep `msgraph_simple/` limited to the production code required by the package.
 
 Add files and folders only when the implementation requires them.
 
-### Authentication/
+### `_auth.py`
 
-Contains Microsoft Entra ID credential and authentication handling.
-
-Use Microsoft's supported authentication libraries, primarily `Azure.Identity`.
+Microsoft Entra ID credential and sign-in handling. Use `azure-identity`; no token acquisition,
+caching, expiry or refresh is written here.
 
 Support applicable authentication scenarios including:
 
@@ -56,15 +52,18 @@ Support applicable authentication scenarios including:
 * Managed identity
 * On-behalf-of authentication
 
-Use `TokenCredential` as the credential abstraction.
+Any `azure.core.credentials_async.AsyncTokenCredential` is accepted, so the scenarios this package
+does not construct itself are still a credential swap away.
 
 Keep credential handling centralized.
 
-### Graph/
+### `_http.py`, `_request.py`, `_operations.py`
 
-Contains Microsoft Graph request and client implementation.
+Microsoft Graph request construction and execution.
 
-Use the official Microsoft Graph SDK for typed operations and Microsoft-supported HTTP infrastructure.
+Use `msgraph-core`'s middleware for the HTTP infrastructure Microsoft supports. Paging, batching
+and chunked upload are this package's own, because Kiota's versions require a `RequestAdapter`
+this package does not use.
 
 Support:
 
@@ -80,13 +79,12 @@ Support:
 * Request cancellation
 * Retry and throttling
 
-Use `IAsyncEnumerable<T>` where it provides a natural interface for paginated operations.
+Use an async generator where it provides a natural interface for paginated operations.
 
-### Models/
+### `_resources/`
 
-Contains only models required by the package implementation, such as Graph error information.
-
-Keep models focused on package behavior and avoid creating models without a concrete use.
+Mail, calendar, and the shared base they derive from. A resource declares a path and its scopes and
+adds only what is specific to it. Add a resource when there is a caller for it, not before.
 
 ## Authentication
 
@@ -106,7 +104,7 @@ Request only the Microsoft Graph permissions required by the functionality.
 
 ## Microsoft Graph
 
-Use Microsoft's official Graph SDK and supporting libraries where they provide the required functionality.
+Use `msgraph-core` and the rest of Microsoft's supporting libraries where they provide the required functionality.
 
 Use `v1.0` by default.
 
@@ -120,8 +118,8 @@ Support the HTTP methods and request patterns required by Microsoft Graph.
 
 Every asynchronous operation accepts and propagates:
 
-```csharp
-CancellationToken
+```python
+cancellation via the caller's own asyncio task, and an explicit `timeout` where Graph needs one
 ```
 
 Handle Graph:
@@ -205,19 +203,19 @@ ARCHITECTURE.md records why each rule is what it is.
 Test:
 
 ```bash
-cd python && python -m unittest discover -s tests
+python -m unittest discover -s tests
 ```
 
 Install for development:
 
 ```bash
-pip install -e python/
+pip install -e .
 ```
 
 Build the wheel:
 
 ```bash
-python -m build --wheel python/
+python -m build --wheel
 ```
 
 ## Guiding Principle

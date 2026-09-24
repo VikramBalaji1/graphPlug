@@ -12,35 +12,6 @@ failure, a bad secret, a malformed call.
 
 ---
 
-## It will not even import
-
-### `libraryNotFound`
-
-> the native library is missing from the package at …/_lib/MicrosoftGraph.so
-
-The wheel was built without the compiled core, or you are running from a source checkout that has
-never been built. Build it and copy it in:
-
-```bash
-docker build -f build/Dockerfile -t msgraph-core-build .
-docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest" msgraph-core-build \
-       cp /out/MicrosoftGraph.so /dest/
-```
-
-### `unsupportedPlatform`
-
-> no native library for 'win32'
-
-Only `linux-x64` is built. Adding `win-x64` is a RID change and a second build leg — a packaging
-change, not a redesign — but nobody has done it. Run under WSL or a container.
-
-### `coreVersionMismatch`
-
-The `.so` and the Python code ship as one unit and disagree. You have almost certainly copied a
-library from an older build into a newer package. Rebuild both from the same commit.
-
----
-
 ## Sign-in
 
 ### `consentRequired`  (AADSTS65001)

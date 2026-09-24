@@ -1,15 +1,15 @@
-> ## ⚠ This describes the C# core, which is not what ships on this branch
+> ## ⚠ Historical. The C# core this describes has been deleted
 >
-> On `python-native` the package is implemented natively in Python over `azure-identity` and
-> `msgraph-core`. The C# tree in `src/` and `tests/` is still here, and still passes its own
-> tests, but nothing consumes it: there is no ABI, no native library and no Python binding to it.
+> The package is implemented natively in Python over `azure-identity` and `msgraph-core`. The C#
+> tree, the C ABI, the native library and the Docker build are gone from the repository; every
+> path, command and `.cs` file named below is one that no longer exists.
 >
-> Read this document for **why** things are shaped the way they are — the access models (§7), the
-> error taxonomy (§9), the header allowlist (§6.7), the batching and upload rules (§8.5, §8.7).
-> Every one of those decisions survived the rewrite and the Python code cites these sections.
+> This document is kept for **why** things are shaped the way they are — the access models (§7),
+> the error taxonomy (§9), the header allowlist (§6.7), the batching and upload rules (§8.5, §8.7).
+> Every one of those decisions survived the rewrite and the Python code still cites these sections.
 >
-> Do **not** read it for how the package is built or installed. For that see
-> [README.md](README.md) and [USAGE.md](USAGE.md).
+> Do **not** read it for how the package is built, installed or laid out. For that see
+> [README.md](README.md), [USAGE.md](USAGE.md) and [CLAUDE.md](CLAUDE.md).
 
 # Technical Architecture
 
