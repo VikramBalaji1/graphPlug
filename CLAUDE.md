@@ -14,7 +14,6 @@ C# is the canonical implementation. The package will later serve as the core for
 * Azure.Identity
 * xUnit
 * FluentAssertions
-* NuGet
 
 ## Project Structure
 
@@ -186,7 +185,8 @@ Use additional dependencies only when they provide functionality required by the
 
 ## Package
 
-NuGet is the primary package artifact.
+The Python wheel is the only package artifact. The C# core is not published to NuGet: every type in it
+is internal and the wheel loads the natively compiled library rather than referencing the assembly.
 
 The C# implementation is the source of truth for authentication and Microsoft Graph behavior.
 
@@ -212,10 +212,14 @@ Format:
 dotnet format
 ```
 
-Pack:
+Build the native library and the wheel (Linux only):
 
 ```bash
-dotnet pack -c Release
+docker build -f build/Dockerfile -t msgraph-core-build .
+docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest" \
+       msgraph-core-build cp /out/MicrosoftGraph.so /dest/
+python -m build --wheel python/ \
+       -C--build-option=--plat-name=manylinux_2_34_x86_64
 ```
 
 ## Guiding Principle

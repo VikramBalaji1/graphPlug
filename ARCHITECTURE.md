@@ -55,10 +55,21 @@ whole architecture.
 
 The reason to route through C# is that **the behaviour has one implementation**. Auth handling, retry
 semantics, error shape, pagination and batch chunking are written once, tested once in xUnit, and exposed
-identically to every consumer. A future .NET service and the Python scripts cannot drift apart, because
-there is nothing to drift — they are the same compiled code. CLAUDE.md states this directly: *"The C#
-implementation is the source of truth for authentication and Microsoft Graph behavior. The future Python
-interface consumes this C# core rather than reimplementing authentication or Graph functionality."*
+identically to every consumer. CLAUDE.md states this directly: *"The C# implementation is the source of
+truth for authentication and Microsoft Graph behavior. The future Python interface consumes this C# core
+rather than reimplementing authentication or Graph functionality."*
+
+> **Revised once the code existed.** This section originally rested on a second argument: that a future
+> .NET service and the Python scripts could not drift apart, being the same compiled code. There is no .NET
+> service, and none is planned, so that argument is withdrawn rather than left standing as a promise the
+> package does not keep. The core is not published as a NuGet package; every type in it is `internal` and
+> the only consumer is the Python wheel, which loads the compiled library rather than referencing the
+> assembly.
+>
+> What justifies the C# core now is narrower and worth stating plainly: the behaviour is written once
+> against Microsoft's own supported libraries, and the guarantees in §6.7, §7.3 and §7.7 are enforced by
+> the boundary rather than remembered by a caller. If that stops being worth the four rows below, the
+> advice in the paragraph after them still applies.
 
 The price paid for that:
 
@@ -1119,7 +1130,6 @@ every supported Python 3. That is a genuine advantage of `ctypes` over a C exten
 dotnet build                        # host build, fast feedback
 dotnet test                         # C# unit + integration tests, Windows or Linux
 dotnet format                       # style
-dotnet pack -c Release              # NuGet artefact for .NET consumers
 docker build -f build/Dockerfile -t msgraph-core-build .        # linux-x64 library
 docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest"        msgraph-core-build cp /out/MicrosoftGraph.so /dest/      # bundle it into the package
 
@@ -1127,8 +1137,8 @@ python -m unittest discover -s python/tests                     # needs the libr
 python -m build --wheel python/        -C--build-option=--plat-name=manylinux_2_34_x86_64       # wheel, run inside Linux
 ```
 
-Both artefacts come from one source tree: a NuGet package for .NET consumers and a wheel for Python consumers
-— the same compiled behaviour, two distribution channels.
+There is one artefact: the wheel. The managed assembly is a build intermediate, not something anyone
+references — see §2.
 
 ---
 
@@ -1200,7 +1210,7 @@ Each is a decision, not an oversight. Each has a trigger that should bring it in
 | Certificate / managed-identity / OBO auth | Three flows the extension point is already shaped for (§7.4) | Deploying to Azure (managed identity), or moving off shared secrets (certificate) |
 | ROPC (username/password) | Breaks under MFA and Conditional Access; stores user passwords | Effectively never; device code covers the headless case properly |
 | `graph_cancel` for in-flight requests | `timeoutMs` covers the common case; sign-ins are already cancellable | Someone needs to abort a long upload from outside |
-| Typed Graph models | Generic JSON reaches every `v1.0` and `beta` endpoint on day one | A .NET consumer wants typed request builders — and should then take `Microsoft.Graph` itself, not this |
+| Typed Graph models | Generic JSON reaches every `v1.0` and `beta` endpoint on day one | Never, under the revised §2 — anyone wanting typed request builders in .NET should take `Microsoft.Graph` itself rather than this |
 | Native async | `ctypes` releases the GIL, so `asyncio.to_thread` covers it | Measured thread-pool pressure from high request concurrency |
 | Response caching | Graph's `ETag`/`If-None-Match` support is passthrough already | A measured hot path re-fetches unchanged data |
 | ~~Structured logging~~ | **Added.** `Diagnostics/GraphLog`: opt-in via `MSGRAPH_LOG_LEVEL`, one JSON object per line on stderr, off by default. Logs `requestId`, never headers, and never the query string — an OData `$filter` carries user identifiers. No dependency, no DI container, no ABI change | — |
@@ -1277,7 +1287,7 @@ CLAUDE.md asks for *"the smallest reliable C# core that provides unified Microso
 Microsoft Graph request handling."* The project also asks for object-oriented design that pays off in
 reusability. §4 states how those reconcile; this is what the reconciliation produced.
 
-**Small:** nine exports, two NuGet dependencies, zero Python dependencies, zero lines of hand-written retry or
+**Small:** nine exports, three NuGet dependencies, zero Python dependencies, zero lines of hand-written retry or
 token logic. Pagination has no server state. Binary payloads use the filesystem instead of a second protocol.
 
 **Object-oriented where it pays:** five abstractions, each with at least two implementations on day one.

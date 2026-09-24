@@ -68,9 +68,13 @@ except GraphError as e:
 
 ### C#
 
-The core is `internal` by design — it is consumed across the C ABI, not referenced as a library.
-The NuGet package exists for .NET consumers who want the same compiled behaviour; see
-[ARCHITECTURE.md §6](ARCHITECTURE.md#6-the-abi-contract) for the nine exported entry points.
+**There is no .NET package.** Every type in the core is `internal`, and it is consumed across the C ABI
+rather than referenced as an assembly — see [ARCHITECTURE.md §2](ARCHITECTURE.md#2-why-a-c-core) for why
+that was chosen deliberately rather than left as an oversight. A .NET application wanting Graph should
+take `Microsoft.Graph` directly.
+
+The nine exported entry points are documented in
+[ARCHITECTURE.md §6](ARCHITECTURE.md#6-the-abi-contract).
 
 ---
 
@@ -254,8 +258,6 @@ The development machine is Windows. The shipped artefact is a `linux-x64` shared
 dotnet build                        # host build, fast feedback
 dotnet test                         # unit + integration tests, Windows or Linux
 dotnet format                       # style
-dotnet pack -c Release              # NuGet artefact for .NET consumers
-
 docker build -f build/Dockerfile -t msgraph-core-build .        # linux-x64 .so
 docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest"        msgraph-core-build cp /out/MicrosoftGraph.so /dest/   # bundle it into the package
 
