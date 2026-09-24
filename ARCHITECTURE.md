@@ -156,7 +156,7 @@ roughly thirty lines; names drawn from the Graph and Entra domain (`DeviceCodeSt
 │      │                        guaranteed graph_free()                    │
 │ ═════╪════════════════════ C ABI · UTF-8 JSON ══════════════════════════ │
 │      ▼                                                                   │
-│  libMicrosoftGraph.so                                                    │
+│  MicrosoftGraph.so                                                    │
 │  ┌────────────────────────────────────────────────────────────────────┐  │
 │  │ Interop/Exports.cs        9 [UnmanagedCallersOnly] entrypoints     │  │
 │  │ Interop/HandleRegistry<T> sessions · pending authentications       │  │
@@ -192,11 +192,16 @@ src/MicrosoftGraph/
 │   ├── AppOnly/
 │   │   └── ClientSecretStrategy.cs
 │   └── Delegated/
+│       ├── DelegatedStrategy.cs          # shared: public client, refuses to default scopes
+│       ├── DelegatedSignIn.cs            # the sign-in window, and failure translation
 │       ├── DeviceCodeStrategy.cs
 │       ├── DeviceCodePendingAuthentication.cs
 │       ├── AuthorizationCodeStrategy.cs
 │       ├── AuthorizationCodePendingAuthentication.cs
+│       ├── MsalAuthorizationCodeCredential.cs   # the PKCE exchange (§10)
 │       └── PkceCodes.cs                  # verifier/challenge, never crosses the ABI
+├── Diagnostics/
+│   └── GraphLog.cs                       # opt-in structured logging (§14)
 ├── Graph/
 │   ├── GraphSession.cs                   # credential + HttpClient + executor, IAsyncDisposable
 │   ├── GraphRequestExecutor.cs           # builds and runs operations
@@ -215,8 +220,11 @@ src/MicrosoftGraph/
 │   ├── Exports.cs                        # the nine native entrypoints, marshalling only
 │   └── HandleRegistry.cs                 # HandleRegistry<T>, used twice
 ├── Models/
-│   ├── GraphRequest.cs  GraphResponse.cs  GraphErrorInfo.cs    # immutable records
-│   ├── Envelopes/                        # ABI DTOs
+│   ├── GraphErrorInfo.cs                 # the one place a failure becomes an error object
+│   ├── GraphCoreException.cs  CoreVersion.cs
+│   ├── EntraFailure.cs                   # reads the AADSTS detail off the inner exception
+│   ├── ResponseHeaderFilter.cs           # the §6.7 allowlist, shared by two call sites
+│   ├── Envelopes/                        # ABI DTOs; request and response records live here
 │   └── GraphJsonContext.cs               # source-generated serialisation
 └── MicrosoftGraph.csproj
 
@@ -225,15 +233,20 @@ tests/
 └── IntegrationTests/                     # full pipeline, controlled responses; live tests env-gated
 
 python/
+├── setup.py                              # tags the wheel py3-none-<platform> (§12.3)
+├── pyproject.toml
+├── tests/                                # test_client.py (above the ABI) · test_abi.py
 └── msgraph_simple/
     ├── __init__.py                       # GraphClient, GraphError, PendingSignIn
     ├── _native.py                        # ctypes layer
     ├── _auth.py                          # browser + localhost redirect listener (stdlib only)
-    ├── _lib/libMicrosoftGraph.so         # built artefact, bundled into the wheel
+    ├── _lib/MicrosoftGraph.so            # built artefact, bundled into the wheel
     └── py.typed
 
 build/Dockerfile                          # linux-x64 NativeAOT build
-docs/  samples/
+.github/workflows/ci.yml                  # managed tests, then the container build and the wheel
+docs/troubleshooting.md                   # every error code: cause and fix
+samples/                                  # runnable scripts, one per access model
 ```
 
 `Exports.cs` contains no logic beyond marshalling, dispatch and the mandatory `catch` (§6.2). Every
@@ -645,10 +658,19 @@ That pipeline supplies, as supported Microsoft code:
 |---|---|
 | `RetryHandler` | Retries `429`, `503`, `504`; **honours `Retry-After`**; exponential backoff; configurable ceiling via `RetryHandlerOption` |
 | `RedirectHandler` | Follows Graph redirects, notably pre-authenticated download URLs |
-| `CompressionHandler` | `gzip` request/response compression |
 | `UserAgentHandler` | Identifies the SDK to Graph telemetry |
 | `ParametersNameDecodingHandler` | Correct OData parameter encoding |
-| `AuthorizationHandler` | Attaches the bearer token; retries once on a `401` challenge |
+| `AuthorizationHandler` | Attaches the bearer token; retries once on a **CAE claims challenge** — a bare `401` is reported, not retried |
+
+> **Verified against Microsoft.Graph.Core 4.0.1.** `CreateDefaultHandlers()` contains no
+> `CompressionHandler`; an earlier draft of this table listed one. The full list is
+> `UriReplacement`, `Retry`, `Redirect`, `ParametersNameDecoding`, `UserAgent`,
+> `HeadersInspection`, `BodyInspection` and `GraphTelemetry`.
+>
+> It also emerged that `RetryHandler` **throws** `AggregateException`/`ApiException` once its
+> budget is exhausted rather than returning the last response. `ErrorEnvelope.From` rebuilds a
+> faithful envelope from the exception; without that, a throttled call degraded to
+> `internalError` with no status and no `Retry-After`, breaking the promise two paragraphs below.
 
 **No retry, backoff or throttling logic is written in this package.** CLAUDE.md's "avoid implementing custom
 infrastructure when the Microsoft Graph SDK or .NET already provides the required behavior" resolves this
@@ -696,6 +718,12 @@ https://graph.microsoft.com/{version}{path}?{urlencoded query}
 
 Absolute-URL passthrough is what makes pagination, pre-authenticated download URLs and `Location`-header
 follow-ups work without special cases.
+
+> **Platform trap, found by the first Linux build.** "Is this absolute?" must **not** be decided with
+> `Uri.TryCreate(path, UriKind.Absolute, …)`. On Unix that returns `true` for `/users`, parsing it as the
+> file URI `file:///users`; on Windows it returns `false`. Deciding on it rejected every relative Graph
+> path on Linux — the only platform this ships to — while the suite stayed green on the development
+> machine. The discriminator is the scheme separator, which no Graph path contains and every URL does.
 
 ### 8.4 Pagination
 
@@ -767,11 +795,10 @@ Chunk size is 10 MiB and **must be a multiple of 320 KiB**, which Graph requires
 Transient chunk failures are retried against the session's `nextExpectedRanges`, which is what makes a large
 upload resumable within a single call.
 
-> **Open verification item.** `ChunkedUploadStrategy` will attempt `LargeFileUploadTask` from
-> `Microsoft.Graph.Core` first. That type is generic over `IParsable` result types, and D2 excludes the typed
-> models it expects, so it may not bind cleanly. The fallback is a self-contained chunk loop of roughly sixty
-> lines. This resolves at milestone 5 (§15); either way the choice is contained behind `IUploadStrategy` and
-> invisible to every other class.
+> **Resolved at milestone 5.** `LargeFileUploadTask` cannot be used at all. Beyond being generic over the
+> `IParsable` result types D2 excludes, its constructor requires a Kiota `IRequestAdapter`, which this package
+> deliberately never builds. `ChunkedUploadStrategy` is therefore the self-contained chunk loop. As predicted,
+> the choice stayed behind `IUploadStrategy` and invisible to every other class.
 
 ### 8.8 Cancellation and timeouts
 
@@ -911,19 +938,25 @@ The two excluded flows are precisely why auth-code+PKCE is structured with Pytho
 it delivers the interactive-browser experience while the core does only the AOT-safe half — the code-for-token
 exchange.
 
-> **Open verification item.** Azure.Identity's `AuthorizationCodeCredential` may not expose a PKCE code
-> verifier in the version pinned. If it does not, `AuthorizationCodeStrategy` wraps MSAL.NET's
-> `AcquireTokenByAuthorizationCode(…).WithPkceCodeVerifier(…)` in a small `TokenCredential` subclass instead.
-> Resolves at milestone 3 (§15), and — because the `AuthenticationStrategy` abstraction already isolates it —
-> the choice touches exactly one file.
+> **Resolved at milestone 3.** Azure.Identity's `AuthorizationCodeCredential` is unusable here on two
+> counts: it exposes no PKCE code verifier, and *every* constructor demands a `clientSecret` that the public
+> client of §7.2 does not have. The MSAL.NET fallback is what ships —
+> `AcquireTokenByAuthorizationCode(…).WithPkceCodeVerifier(…)` against a secretless confidential client,
+> wrapped in `MsalAuthorizationCodeCredential`. `Microsoft.Identity.Client` becomes a direct reference but
+> was already transitive via Azure.Identity, so the dependency graph is unchanged. As predicted, the
+> abstraction confined it: nothing downstream of the credential knows.
+>
+> **Still unproven:** that Entra accepts a secretless PKCE exchange for a given app registration. MSAL builds
+> the client; only a live tenant can show whether the service accepts the request.
 
 **Diagnostics are thinner.** Stack traces in an AOT binary are less complete than under the JIT. The core
 compensates by attaching `code` and `requestId` to every error and keeping the call stack shallow —
 export → executor → operation → pipeline.
 
-> **Milestone 1 exists for this section.** The `Azure.Identity` + Kiota handler stack is expected to be
-> AOT-clean, but "expected" is not "verified". If that fight is lost, D1 can still change cheaply — nothing
-> else has been written yet.
+> **Settled.** The `Azure.Identity` + Kiota handler stack is AOT-clean. `dotnet publish -r linux-x64`
+> generates native code in roughly twenty seconds with **no trim or AOT warnings**, producing an 11.5 MB
+> stripped shared library that exports exactly the nine documented entry points and nothing else. D1, D2 and
+> this section are no longer a risk.
 
 ---
 
@@ -1007,7 +1040,7 @@ not in Python, so the CSRF check cannot be skipped by a caller reimplementing th
 
 ### 11.4 Library loading
 
-`_native.py` resolves `libMicrosoftGraph.so` from the package's `_lib/` directory, declares `argtypes` and
+`_native.py` resolves `MicrosoftGraph.so` from the package's `_lib/` directory, declares `argtypes` and
 `restype` for all nine exports (omitting these is the classic way to corrupt pointers on 64-bit platforms),
 verifies `coreVersion`, and exposes only `_call`.
 
@@ -1057,14 +1090,21 @@ RUN dotnet publish src/MicrosoftGraph -r linux-x64 -c Release -o /out
 ```bash
 docker build -f build/Dockerfile -t msgraph-core-build .
 docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest" msgraph-core-build \
-       cp /out/libMicrosoftGraph.so /dest/
+       cp /out/MicrosoftGraph.so /dest/
 ```
 
 ### 12.3 Wheel
 
 The wheel is platform-specific and contains a compiled binary, so it is tagged accordingly rather than as
 `py3-none-any`. Building inside the .NET SDK image (Debian-based) sets the glibc floor, and the wheel is
-tagged to match, e.g. `msgraph_simple-0.1.0-py3-none-manylinux_2_36_x86_64.whl`.
+tagged to match. The floor is read from the library itself rather than assumed: the highest versioned
+glibc symbol it imports is `GLIBC_2.34`, so the artefact is
+`msgraph_simple-0.1.0-py3-none-manylinux_2_34_x86_64.whl`.
+
+Neither half of that tag is what setuptools produces unaided. From `pyproject.toml` alone it emits
+`py3-none-any`, which installs cheerfully on Windows and then fails at import; declaring the distribution
+impure over-corrects to `cp314-cp314`, pinning one interpreter. `python/setup.py` overrides `bdist_wheel`
+to get both halves right at once.
 
 It is `py3-none-*` rather than `cp314-*`: `ctypes` is ABI-stable across CPython versions, so one wheel serves
 every supported Python 3. That is a genuine advantage of `ctypes` over a C extension.
@@ -1076,8 +1116,11 @@ dotnet build                        # host build, fast feedback
 dotnet test                         # C# unit + integration tests, Windows or Linux
 dotnet format                       # style
 dotnet pack -c Release              # NuGet artefact for .NET consumers
-docker build -f build/Dockerfile .  # linux-x64 .so
-python -m build python/             # wheel, run inside Linux
+docker build -f build/Dockerfile -t msgraph-core-build .        # linux-x64 library
+docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest"        msgraph-core-build cp /out/MicrosoftGraph.so /dest/      # bundle it into the package
+
+python -m unittest discover -s python/tests                     # needs the library above
+python -m build --wheel python/        -C--build-option=--plat-name=manylinux_2_34_x86_64       # wheel, run inside Linux
 ```
 
 Both artefacts come from one source tree: a NuGet package for .NET consumers and a wheel for Python consumers
@@ -1156,7 +1199,7 @@ Each is a decision, not an oversight. Each has a trigger that should bring it in
 | Typed Graph models | Generic JSON reaches every `v1.0` and `beta` endpoint on day one | A .NET consumer wants typed request builders — and should then take `Microsoft.Graph` itself, not this |
 | Native async | `ctypes` releases the GIL, so `asyncio.to_thread` covers it | Measured thread-pool pressure from high request concurrency |
 | Response caching | Graph's `ETag`/`If-None-Match` support is passthrough already | A measured hot path re-fetches unchanged data |
-| Structured logging / telemetry | Nothing to log that the returned envelope does not already carry | Production debugging needs cross-call correlation — and then it logs `requestId`, never headers |
+| ~~Structured logging~~ | **Added.** `Diagnostics/GraphLog`: opt-in via `MSGRAPH_LOG_LEVEL`, one JSON object per line on stderr, off by default. Logs `requestId`, never headers, and never the query string — an OData `$filter` carries user identifiers. No dependency, no DI container, no ABI change | — |
 | `win-x64` / `osx-arm64` builds | `linux-x64` is the deployment target (D12) | A native Windows dev loop is wanted, or macOS deployment appears |
 | Concurrent batch chunk dispatch | Sequential is correct and simpler | Batch latency is measured as a problem |
 
@@ -1167,40 +1210,60 @@ Each is a decision, not an oversight. Each has a trigger that should bring it in
 Each milestone has a verification that either passes or does not. Do not start one before its predecessor's
 check is green.
 
+> **All seven are green.** Built and verified on Ubuntu 26.04 under WSL with .NET 10.0.401 and clang 21.
+> 171 managed tests pass on Windows and Linux alike; 61 Python tests pass against the real compiled core,
+> with one skip — the live-tenant suite. What remains unproven is only what needs a tenant: see the note at
+> the end of this section.
+
 1. **AOT spike.** `MicrosoftGraph.csproj` plus one export that builds a `ClientSecretCredential`, issues
    `GET /users`, and returns the JSON. Build in Docker.
    → **Verify:** a Python `ctypes` script loads the `.so` and prints a real user from a real tenant.
-   → *De-risks D1, D2 and §10 together. If Azure.Identity or the Kiota handlers resist NativeAOT, that is
-   discovered here, while changing the interop decision is still cheap.*
+   → **Done.** Native code generated in ~20s with no trim or AOT warnings. An 11.5 MB stripped library
+   exporting exactly the nine entry points. D1, D2 and §10 are settled.
 
 2. **Core request path, application access.** Models, `GraphJsonContext`, `HandleRegistry<T>`, `GraphSession`,
    `GraphOperation` + `JsonRequestOperation`, `AuthenticationStrategy` + `ClientSecretStrategy`, the factory,
    and the four exports `client_create` / `client_close` / `request` / `free`.
-   → **Verify:** `dotnet test` green on the unit suite; `Authorization` assertions pass.
+   → **Done.** Unit and integration suites green; the `Authorization` assertions pass.
 
 3. **Delegated access.** `PendingAuthentication`, `DeviceCodeStrategy`, `AuthorizationCodeStrategy` with PKCE,
    and the three exports `auth_begin` / `auth_complete` / `auth_cancel`. Resolves the PKCE verification item
    in §10.
-   → **Verify:** unit suite green including the PKCE and scope-required tests; a stubbed end-to-end device code
-   flow yields a working session.
+   → **Done.** PKCE and scope-required tests pass; a stubbed end-to-end device code flow yields a session
+   that calls Graph. The §10 verification item resolved against expectation — see there.
 
 4. **Python package.** `_native.py`, `_auth.py`, `GraphClient` with `app_only` / `from_env` / `device_code` /
    `interactive`, `paged`, `GraphError`, `py.typed`.
-   → **Verify:** ABI tests green, including the no-crash cases and the RSS-stability loop; a real device code
-   sign-in against a real tenant returns `/me`.
+   → **Done, except the live half.** All 19 ABI tests pass against the compiled core: the no-crash cases,
+   the RSS-stability loops, handle lifecycle and version agreement. A real device code sign-in still needs a
+   tenant.
 
 5. **Files.** `DownloadOperation`, `UploadOperation`, `IUploadStrategy` and both implementations. Resolves the
    `LargeFileUploadTask` verification item in §8.7.
-   → **Verify:** round-trip a file larger than 4 MiB and compare checksums; a failed download leaves no file at
-   `destPath`.
+   → **Done.** A file over 4 MiB round-trips through an upload session with matching SHA-256; a failed
+   download leaves nothing at `destPath`.
 
 6. **Batching.** `BatchOperation` — chunk at 20, merge, restore input order.
-   → **Verify:** a 25-request batch returns 25 responses in submission order, with one deliberately failing
+   → **Done.** A 25-request batch returns 25 responses in submission order, with a deliberately failing
    sub-request reported in place rather than raised.
 
 7. **Packaging.** `build/Dockerfile`, wheel build, CI on the Linux leg.
-   → **Verify:** `pip install` the wheel into a clean container and run the smoke test against a live tenant,
-   app-only unattended and delegated manually.
+   → **Done, except the live half.** The container build succeeds, runs the managed suite inside the image,
+   and yields the library. The wheel installs into a clean virtual environment, imports, loads and
+   version-checks the core, creates a session offline, and returns clean error envelopes for a closed handle,
+   malformed JSON and an unknown handle — with the interpreter still alive, which is the point. A smoke test
+   against a live tenant still needs a tenant.
+
+---
+
+### What a tenant would still settle
+
+Everything above is verified without one. These are not:
+
+- Whether Entra accepts a **secretless PKCE exchange** for a given app registration (§10). MSAL builds the
+  request; only the service can accept it. This is the largest remaining unknown.
+- A real device code sign-in end to end, and the silent refresh that follows it.
+- That the permissions in §7.2 are sufficient in practice for each sample.
 
 ---
 

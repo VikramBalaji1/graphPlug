@@ -360,31 +360,30 @@ Each is a decision with a trigger, not an oversight. The full table is in
 
 ## Status
 
-All seven milestones of [ARCHITECTURE.md §15](ARCHITECTURE.md#15-build-order) are implemented.
-**158 C# tests and 58 Python tests**, with the Release build clean of warnings.
+All seven milestones of [ARCHITECTURE.md §15](ARCHITECTURE.md#15-build-order) are implemented **and
+verified on Linux**. The core compiles, the library loads, the wheel installs and the boundary holds.
 
-| # | Milestone | Verified by |
-|---|---|---|
-| 1 | AOT spike | **Partial.** AOT and trim analysers are clean and reflection-based JSON is disabled in the library *and* both test hosts, so the tests run under the shipped binary's constraints. The native link itself is unverified — see below |
-| 2 | Core request path, application access | Unit and integration suites, including the `Authorization` assertions |
-| 3 | Delegated access | Unit suite including the PKCE and scope-required tests, plus a full device code flow against a stubbed Entra: begin → code issued → complete → a session that calls Graph |
-| 4 | Python package | The layer above the boundary is covered; the ABI tests are written and skip until the `.so` exists |
-| 5 | Files | A file over 4 MiB round-trips through an upload session with matching SHA-256, and a failed download leaves nothing at the destination |
-| 6 | Batching | A 25-request batch returns 25 responses in submission order with one deliberately failing sub-request reported in place |
-| 7 | Packaging | `build/Dockerfile` and the CI workflow are written; neither has been executed here |
+| | |
+|---|---|
+| Managed tests | **171**, green on Windows and Linux alike |
+| Python tests | **61**, green against the real compiled core; 1 skip, the live-tenant suite |
+| Native compilation | ~20 seconds, **no trim or AOT warnings** |
+| The library | 11.5 MB stripped, exporting exactly the nine documented entry points |
+| The wheel | `msgraph_simple-0.1.0-py3-none-manylinux_2_34_x86_64.whl`, installs clean and imports |
 
-### What has not been run
+Built on Ubuntu 26.04 under WSL with .NET 10.0.401 and clang 21, and independently through
+`build/Dockerfile`, which runs the managed suite inside the image before producing anything.
 
-NativeAOT cannot cross-compile, and this was developed on Windows with no Docker and no Linux .NET
-SDK. So the following are **written but unexecuted**, and should be treated as unproven until a
-Linux build runs:
+### What still needs a tenant
 
-- the NativeAOT link itself, and therefore the `.so`
-- every ABI test (19 of them, currently skipping)
-- the Docker build, the wheel, and the CI workflow
-- anything requiring a real tenant, including whether Entra accepts the secretless PKCE exchange
+Everything above was verified without one. These were not, and cannot be:
 
-`dotnet test` and the Python layer tests are green and need none of the above.
+- **Whether Entra accepts a secretless PKCE exchange** for a given app registration. MSAL builds the
+  request; only the service can accept it. This is the largest remaining unknown.
+- A real device code sign-in end to end, and the silent refresh that follows it.
+- That the permissions in ARCHITECTURE.md §7.2 are sufficient in practice for each sample.
+
+Set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` and the live suite stops skipping.
 
 ## Licence
 

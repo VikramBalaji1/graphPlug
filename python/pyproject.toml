@@ -16,6 +16,9 @@ authors = [{ name = "Arvind Vikram" }]
 # dependency resolution; everything the binding needs is in the standard library.
 dependencies = []
 
+# The wheel is platform-specific; see setup.py. Build it with the glibc floor of the image the
+# library came from:
+#     python -m build --wheel python/ #            -C--build-option=--plat-name=manylinux_2_34_x86_64
 [tool.setuptools.packages.find]
 include = ["msgraph_simple*"]
 
