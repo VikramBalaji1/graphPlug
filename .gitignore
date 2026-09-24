@@ -1,0 +1,31 @@
+# ── .NET ────────────────────────────────────────────────────────────────────
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# NuGet output. The package is a build artefact, not a source file.
+*.nupkg
+*.snupkg
+
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/lib/
+dist/
+.venv/
+venv/
+
+# ── The native core ─────────────────────────────────────────────────────────
+# Built by build/Dockerfile and copied in before the wheel is packed. It is a
+# compiled artefact of this repository, so it is produced rather than tracked.
+python/msgraph_simple/_lib/*
+!python/msgraph_simple/_lib/.gitkeep
+
+# ── Local ───────────────────────────────────────────────────────────────────
+# Never commit credential material. Secrets are read from the environment.
+.env
+*.pfx
+*.pem

@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>MicrosoftGraph</RootNamespace>
+  </PropertyGroup>
+
+  <!-- NativeAOT shared library (ARCHITECTURE.md 10). Applied on publish; inert during `dotnet build`. -->
+  <PropertyGroup>
+    <PublishAot>true</PublishAot>
+    <NativeLib>Shared</NativeLib>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
+    <!-- Surfaces AOT/trim violations as build warnings on Windows, where no native linker exists. -->
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>MicrosoftGraph</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Unified Microsoft Entra ID authentication and Microsoft Graph request handling.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.21.0" />
+    <PackageReference Include="Microsoft.Graph.Core" Version="4.0.1" />
+    <!-- Already transitive via Azure.Identity, so this adds no package to the graph. Needed
+         directly because Azure.Identity exposes no PKCE code verifier (ARCHITECTURE.md 10). -->
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.83.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="UnitTests" />
+    <InternalsVisibleTo Include="IntegrationTests" />
+  </ItemGroup>
+
+</Project>

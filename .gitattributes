@@ -1,0 +1,15 @@
+# Normalise to LF in the repository. Development happens on Windows but the artefact is built in a
+# Linux container, and CRLF in a Dockerfile or a shell script breaks there.
+* text=auto eol=lf
+
+*.sln    text eol=crlf
+*.slnx   text eol=crlf
+*.cmd    text eol=crlf
+*.ps1    text eol=crlf
+
+*.png    binary
+*.so     binary
+*.dll    binary
+*.dylib  binary
+*.nupkg  binary
+*.whl    binary

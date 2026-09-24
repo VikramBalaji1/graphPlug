@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "msgraph-simple"
+version = "0.1.0"
+description = "Unified Microsoft Entra ID authentication and Microsoft Graph request handling."
+readme = "README.md"
+requires-python = ">=3.9"
+
+# Deliberately empty. A package whose selling point is "plug and play" should not begin with a
+# dependency resolution; everything the binding needs is in the standard library.
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["msgraph_simple*"]
+
+[tool.setuptools.package-data]
+msgraph_simple = ["py.typed", "_lib/*"]

@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  managed:
+    name: dotnet test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet format --verify-no-changes
+      - run: dotnet test --nologo
+
+  native:
+    name: linux-x64 wheel
+    runs-on: ubuntu-latest
+    needs: managed
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # NativeAOT cannot cross-compile, so the artefact is built on Linux, in the container that
+      # defines the build.
+      - run: docker build -f build/Dockerfile -t msgraph-core-build .
+      - run: |
+          docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest" msgraph-core-build \
+                 cp /out/libMicrosoftGraph.so /dest/
+
+      # The ABI tests only mean anything once the library is in place.
+      - run: python -m unittest discover -s python/tests -v
+
+      - run: pip install build && python -m build python/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: python/dist/*.whl
