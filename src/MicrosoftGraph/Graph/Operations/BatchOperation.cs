@@ -24,7 +24,7 @@ namespace MicrosoftGraph.Graph.Operations;
 /// <para>
 /// This is deliberately <b>not</b> a <see cref="GraphOperation"/>, which §8.2 shapes around a single
 /// request. A batch is a composite: each chunk is an ordinary <see cref="JsonRequestOperation"/>
-/// run through the executor, so chunks inherit retry, throttling and the shared error shape for
+/// run through the session, so chunks inherit retry, throttling and the shared error shape for
 /// free, and this class holds only the splitting and merging.
 /// </para>
 /// </remarks>
@@ -40,13 +40,13 @@ internal sealed class BatchOperation(RequestEnvelope request)
         candidate.Path is { } path && path.EndsWith(BatchPath, StringComparison.OrdinalIgnoreCase);
 
     public async Task<ResponseEnvelope> ExecuteAsync(
-        GraphRequestExecutor executor, CancellationToken cancellationToken)
+        GraphSession session, CancellationToken cancellationToken)
     {
         var requests = ReadRequests();
         var merged = new JsonArray();
         var status = 200;
 
-        await foreach (var chunkResponse in SendChunksAsync(executor, requests, cancellationToken)
+        await foreach (var chunkResponse in SendChunksAsync(session, requests, cancellationToken)
             .ConfigureAwait(false))
         {
             if (!chunkResponse.Ok)
@@ -81,7 +81,7 @@ internal sealed class BatchOperation(RequestEnvelope request)
     /// dependency-aware partitioning, worth adding only if batch latency is measured as a problem.
     /// </remarks>
     private async IAsyncEnumerable<ResponseEnvelope> SendChunksAsync(
-        GraphRequestExecutor executor,
+        GraphSession session,
         IReadOnlyList<JsonNode> requests,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -102,7 +102,7 @@ internal sealed class BatchOperation(RequestEnvelope request)
                 Body = new JsonObject { ["requests"] = chunk },
             };
 
-            yield return await executor
+            yield return await session
                 .ExecuteAsync(new JsonRequestOperation(chunkRequest), cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -135,13 +135,6 @@ internal sealed class BatchOperation(RequestEnvelope request)
             {
                 yield return matched.DeepClone();
             }
-        }
-
-        // Anything Graph returned that was not asked for still reaches the caller rather than
-        // being silently dropped.
-        foreach (var orphan in byId.Values)
-        {
-            yield return orphan.DeepClone();
         }
     }
 

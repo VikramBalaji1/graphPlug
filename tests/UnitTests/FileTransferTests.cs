@@ -112,7 +112,7 @@ public class FileTransferTests : IDisposable
     public async Task A_small_upload_sends_the_file_as_a_single_put()
     {
         var source = WriteFile("small.bin", 1024);
-        var transport = StubHttpMessageHandler.Returning(
+        var transport = RecordingTransport.Returning(
             HttpStatusCode.Created, """{ "id": "01ABC", "name": "small.bin" }""");
 
         var response = await OperationRunner.RunAsync(
@@ -135,7 +135,7 @@ public class FileTransferTests : IDisposable
     public async Task A_failed_upload_produces_the_same_error_shape_as_any_other_failure()
     {
         var source = WriteFile("small.bin", 16);
-        var transport = StubHttpMessageHandler.Returning(
+        var transport = RecordingTransport.Returning(
             HttpStatusCode.Forbidden,
             """{ "error": { "code": "accessDenied", "message": "no write access" } }""");
 
@@ -160,7 +160,7 @@ public class FileTransferTests : IDisposable
     {
         var destination = Path("out.bin");
         var payload = new string('x', 5000);
-        var transport = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        var transport = new RecordingTransport(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(payload),
         });
@@ -185,7 +185,7 @@ public class FileTransferTests : IDisposable
     public async Task A_failed_download_leaves_no_file_at_the_destination()
     {
         var destination = Path("never.bin");
-        var transport = StubHttpMessageHandler.Returning(
+        var transport = RecordingTransport.Returning(
             HttpStatusCode.NotFound, """{ "error": { "code": "itemNotFound" } }""");
 
         var response = await OperationRunner.RunAsync(
@@ -206,7 +206,7 @@ public class FileTransferTests : IDisposable
     public async Task A_download_interrupted_mid_transfer_leaves_nothing_behind()
     {
         var destination = Path("partial.bin");
-        var transport = new StubHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        var transport = new RecordingTransport(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StreamContent(new FailingStream()),
         });

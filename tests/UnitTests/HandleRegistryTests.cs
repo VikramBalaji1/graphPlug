@@ -58,9 +58,19 @@ public class HandleRegistryTests
     public void Concurrent_adds_and_removes_leave_nothing_behind()
     {
         var registry = new HandleRegistry<string>();
+        var handles = new System.Collections.Concurrent.ConcurrentBag<long>();
 
-        Parallel.For(0, 500, i => registry.Remove(registry.Add($"session-{i}")));
+        Parallel.For(0, 500, i =>
+        {
+            var handle = registry.Add($"session-{i}");
+            handles.Add(handle);
+            registry.Remove(handle);
+        });
 
-        registry.Count.Should().Be(0);
+        handles.Should().HaveCount(500).And.OnlyHaveUniqueItems();
+        foreach (var handle in handles)
+        {
+            registry.Invoking(r => r.Get(handle)).Should().Throw<GraphCoreException>();
+        }
     }
 }

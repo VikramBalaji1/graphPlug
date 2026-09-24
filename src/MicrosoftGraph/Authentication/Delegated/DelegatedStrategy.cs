@@ -23,11 +23,7 @@ internal abstract class DelegatedStrategy : AuthenticationStrategy
                 "invalidRequest", "'scopes' is required for delegated authentication");
     }
 
-    public static Uri DefaultAuthorityHost { get; } = new("https://login.microsoftonline.com");
-
-    public override AccessModel AccessModel => AccessModel.Delegated;
-
-    public override bool RequiresInteraction => true;
+    private static readonly Uri DefaultAuthorityHost = new("https://login.microsoftonline.com");
 
     public override IReadOnlyList<string> Scopes { get; }
 

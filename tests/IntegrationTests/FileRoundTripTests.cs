@@ -133,7 +133,7 @@ public class FileRoundTripTests : IDisposable
             new FakeTokenCredential(), ["https://graph.microsoft.com/.default"],
             finalHandler: transport);
 
-        return await session.Executor.ExecuteAsync(operation, CancellationToken.None);
+        return await session.ExecuteAsync(operation, CancellationToken.None);
     }
 
     [Fact]

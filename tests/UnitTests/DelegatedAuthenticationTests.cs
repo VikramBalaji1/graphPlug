@@ -33,17 +33,6 @@ public class DelegatedAuthenticationTests
         AuthenticationStrategyFactory.Create(Delegated(type)).Should().BeOfType(expected);
     }
 
-    [Theory]
-    [InlineData("deviceCode")]
-    [InlineData("authorizationCode")]
-    public void Delegated_strategies_report_the_delegated_model_and_need_a_human(string type)
-    {
-        var strategy = AuthenticationStrategyFactory.Create(Delegated(type));
-
-        strategy.AccessModel.Should().Be(AccessModel.Delegated);
-        strategy.RequiresInteraction.Should().BeTrue();
-    }
-
     // ── scopes are never defaulted (§7.3) ────────────────────────────────────
 
     [Theory]

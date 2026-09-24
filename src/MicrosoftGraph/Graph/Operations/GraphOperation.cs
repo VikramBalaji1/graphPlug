@@ -15,14 +15,14 @@ namespace MicrosoftGraph.Graph.Operations;
 internal abstract class GraphOperation(IReadOnlyDictionary<string, string>? headers)
 {
     public async Task<ResponseEnvelope> ExecuteAsync(
-        GraphRequestExecutor executor, CancellationToken cancellationToken)
+        GraphSession session, CancellationToken cancellationToken)
     {
-        using var request = BuildRequest(executor.Urls);
+        using var request = BuildRequest(session.Urls);
         ApplyRequestHeaders(request);
 
         var startedAt = Stopwatch.GetTimestamp();
 
-        using var response = await SendAsync(executor.Http, request, cancellationToken)
+        using var response = await SendAsync(session.Http, request, cancellationToken)
             .ConfigureAwait(false);
 
         var envelope = response.IsSuccessStatusCode

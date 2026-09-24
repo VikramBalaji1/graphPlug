@@ -119,19 +119,18 @@ class RequestConstruction(BoundaryTestCase):
     def test_verbs_map_onto_methods_and_return_the_body(self) -> None:
         boundary = self.install(
             ok(body={"m": "GET"}), ok(body={"m": "POST"}), ok(body={"m": "PATCH"}),
-            ok(body={"m": "PUT"}), ok(body=None),
+            ok(body=None),
         )
         client = GraphClient(1)
 
         self.assertEqual(client.get("/x"), {"m": "GET"})
         self.assertEqual(client.post("/x", body={}), {"m": "POST"})
         self.assertEqual(client.patch("/x", body={}), {"m": "PATCH"})
-        self.assertEqual(client.put("/x", body={}), {"m": "PUT"})
         self.assertIsNone(client.delete("/x"))
 
         self.assertEqual(
-            [boundary.envelope(i)["method"] for i in range(5)],
-            ["GET", "POST", "PATCH", "PUT", "DELETE"],
+            [boundary.envelope(i)["method"] for i in range(4)],
+            ["GET", "POST", "PATCH", "DELETE"],
         )
 
     def test_request_returns_the_whole_envelope_not_just_the_body(self) -> None:
@@ -315,7 +314,7 @@ class Authentication(BoundaryTestCase):
             {"ok": True, "handle": 9, "coreVersion": "0.1.0"},
         )
 
-        flow = GraphClient.begin_interactive("t", "c", ["User.Read"])
+        flow = GraphClient._begin_interactive("t", "c", ["User.Read"])
         client = flow.complete(code="the-code", state=flow.state)
 
         self.assertEqual(boundary.names, ["graph_auth_begin", "graph_auth_complete"])
@@ -498,9 +497,7 @@ class NativeBindings(unittest.TestCase):
         # wrong means the package cannot find its own core.
         from msgraph_simple import _native
 
-        self.assertEqual(_native._LIBRARY_NAMES["linux"], "MicrosoftGraph.so")
-        for name in _native._LIBRARY_NAMES.values():
-            self.assertFalse(name.startswith("lib"), name)
+        self.assertEqual(_native._LIBRARY_NAMES, {"linux": "MicrosoftGraph.so"})
 
 
 if __name__ == "__main__":

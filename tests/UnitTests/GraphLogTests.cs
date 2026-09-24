@@ -45,7 +45,7 @@ public class GraphLogTests : IDisposable
 
         await OperationRunner.RunAsync(
             new RequestEnvelope { Method = "GET", Path = "/users" },
-            StubHttpMessageHandler.Returning(HttpStatusCode.OK, "{}"));
+            RecordingTransport.Returning(HttpStatusCode.OK, "{}"));
 
         Output.Should().BeEmpty("a library must be silent unless asked");
     }
@@ -69,7 +69,7 @@ public class GraphLogTests : IDisposable
     {
         await OperationRunner.RunAsync(
             new RequestEnvelope { Method = "GET", Path = "/users" },
-            StubHttpMessageHandler.Returning(
+            RecordingTransport.Returning(
                 HttpStatusCode.OK, """{ "value": [] }""", ("request-id", "rid-42")));
 
         var line = Lines.Should().ContainSingle().Which;
@@ -89,7 +89,7 @@ public class GraphLogTests : IDisposable
     {
         await OperationRunner.RunAsync(
             new RequestEnvelope { Method = "GET", Path = "/users/nope" },
-            StubHttpMessageHandler.Returning(
+            RecordingTransport.Returning(
                 HttpStatusCode.NotFound,
                 """{ "error": { "code": "itemNotFound", "message": "not found" } }"""));
 
@@ -107,13 +107,13 @@ public class GraphLogTests : IDisposable
 
         await OperationRunner.RunAsync(
             new RequestEnvelope { Method = "GET", Path = "/users" },
-            StubHttpMessageHandler.Returning(HttpStatusCode.OK, "{}"));
+            RecordingTransport.Returning(HttpStatusCode.OK, "{}"));
 
         Output.Should().BeEmpty();
 
         await OperationRunner.RunAsync(
             new RequestEnvelope { Method = "GET", Path = "/users" },
-            StubHttpMessageHandler.Returning(HttpStatusCode.Forbidden, "{}"));
+            RecordingTransport.Returning(HttpStatusCode.Forbidden, "{}"));
 
         Lines.Should().ContainSingle().Which["status"]!.GetValue<int>().Should().Be(403);
     }
@@ -133,7 +133,7 @@ public class GraphLogTests : IDisposable
                         .Parse("\"mail eq 'alice@contoso.com'\"").RootElement.Clone(),
                 },
             },
-            StubHttpMessageHandler.Returning(HttpStatusCode.OK, "{}"));
+            RecordingTransport.Returning(HttpStatusCode.OK, "{}"));
 
         Output.Should().NotContain("alice@contoso.com").And.NotContain("filter");
         Lines.Single()["url"]!.GetValue<string>()
@@ -149,7 +149,7 @@ public class GraphLogTests : IDisposable
                 Method = "GET",
                 Path = "https://graph.microsoft.com/v1.0/users?$skiptoken=SECRET-CURSOR",
             },
-            StubHttpMessageHandler.Returning(HttpStatusCode.OK, "{}"));
+            RecordingTransport.Returning(HttpStatusCode.OK, "{}"));
 
         Output.Should().NotContain("SECRET-CURSOR");
     }
@@ -165,7 +165,7 @@ public class GraphLogTests : IDisposable
                 Headers = new Dictionary<string, string> { ["ConsistencyLevel"] = "eventual" },
                 Body = JsonNode.Parse("""{ "passwordProfile": { "password": "hunter2" } }"""),
             },
-            StubHttpMessageHandler.Returning(
+            RecordingTransport.Returning(
                 HttpStatusCode.Unauthorized,
                 """{ "error": { "code": "InvalidAuthenticationToken" } }""",
                 ("WWW-Authenticate", "Bearer realm=\"graph\""),

@@ -9,7 +9,7 @@ import ctypes
 import json
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 __all__ = ["GraphError", "call", "core"]
 
@@ -17,14 +17,11 @@ __all__ = ["GraphError", "call", "core"]
 #: unit, so a mismatched pair fails loudly rather than subtly (6.6).
 WHEEL_VERSION = "0.1.0"
 
-#: NativeAOT names the output after the assembly and adds no "lib" prefix, so this is
-#: MicrosoftGraph.so rather than the libMicrosoftGraph.so a Linux shared library usually is.
-#: Nothing dlopens it by bare name -- it is always loaded by full path -- so the produced name
-#: is used as-is rather than renamed to satisfy a convention that buys nothing here.
+#: Only linux-x64 is built (D12), so only linux is listed. Naming artefacts for platforms no
+#: build produces would turn a clear "this platform is not supported" into a confusing "the file
+#: is missing". NativeAOT adds no "lib" prefix, hence MicrosoftGraph.so.
 _LIBRARY_NAMES = {
     "linux": "MicrosoftGraph.so",
-    "darwin": "MicrosoftGraph.dylib",
-    "win32": "MicrosoftGraph.dll",
 }
 
 _INT64 = ctypes.c_int64
@@ -191,6 +188,3 @@ def _check_core_version(envelope: Dict[str, Any]) -> None:
 def dumps(value: Any) -> str:
     """Compact JSON for the outbound side of the boundary."""
     return json.dumps(value, separators=(",", ":"))
-
-
-_Marshaller = Callable[..., Dict[str, Any]]

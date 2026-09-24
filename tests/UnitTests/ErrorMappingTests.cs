@@ -25,7 +25,7 @@ public class ErrorMappingTests
     [Fact]
     public async Task Maps_a_graph_error_body_onto_the_error_envelope()
     {
-        var transport = StubHttpMessageHandler.Returning(
+        var transport = RecordingTransport.Returning(
             (HttpStatusCode)429,
             ThrottledBody,
             ("Retry-After", "12"),
@@ -48,7 +48,7 @@ public class ErrorMappingTests
     [Fact]
     public async Task Preserves_the_graph_inner_error_verbatim()
     {
-        var transport = StubHttpMessageHandler.Returning((HttpStatusCode)429, ThrottledBody);
+        var transport = RecordingTransport.Returning((HttpStatusCode)429, ThrottledBody);
 
         var response = await OperationRunner.RunAsync(
             new RequestEnvelope { Method = "GET", Path = "/users" }, transport);
@@ -62,7 +62,7 @@ public class ErrorMappingTests
     public async Task Parses_a_Retry_After_given_as_an_http_date()
     {
         var when = DateTimeOffset.UtcNow.AddSeconds(30).ToString("R");
-        var transport = StubHttpMessageHandler.Returning(
+        var transport = RecordingTransport.Returning(
             HttpStatusCode.ServiceUnavailable, "{}", ("Retry-After", when));
 
         var response = await OperationRunner.RunAsync(
@@ -74,7 +74,7 @@ public class ErrorMappingTests
     [Fact]
     public async Task Falls_back_to_the_status_when_the_body_is_not_graph_json()
     {
-        var transport = StubHttpMessageHandler.Returning(
+        var transport = RecordingTransport.Returning(
             HttpStatusCode.BadGateway, "<html><body>Bad Gateway</body></html>");
 
         var response = await OperationRunner.RunAsync(
@@ -89,7 +89,7 @@ public class ErrorMappingTests
     [Fact]
     public async Task Omits_absent_error_fields_rather_than_nulling_them()
     {
-        var transport = StubHttpMessageHandler.Returning(
+        var transport = RecordingTransport.Returning(
             HttpStatusCode.NotFound,
             """{ "error": { "code": "itemNotFound", "message": "not found" } }""");
 

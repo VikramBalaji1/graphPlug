@@ -44,7 +44,7 @@ internal static class Exports
             GraphLog.SessionEvent("sessionCreated", handle);
 
             return Emit(
-                new SessionEnvelope { Ok = true, Handle = handle, CoreVersion = Models.CoreVersion.Value },
+                new SessionEnvelope { Ok = true, Handle = handle, CoreVersion = CoreVersion.Value },
                 GraphJsonContext.Default.SessionEnvelope);
         }
         catch (Exception ex)
@@ -100,7 +100,7 @@ internal static class Exports
             GraphLog.SessionEvent("sessionCreated", handle);
 
             return Emit(
-                new SessionEnvelope { Ok = true, Handle = handle, CoreVersion = Models.CoreVersion.Value },
+                new SessionEnvelope { Ok = true, Handle = handle, CoreVersion = CoreVersion.Value },
                 GraphJsonContext.Default.SessionEnvelope);
         }
         catch (Exception ex)
@@ -156,7 +156,7 @@ internal static class Exports
             using var cts = new CancellationTokenSource(
                 request.TimeoutMs ?? RequestEnvelope.DefaultTimeoutMs);
 
-            var response = session.Executor
+            var response = session
                 .ExecuteAsync(request, cts.Token)
                 .GetAwaiter()
                 .GetResult();
@@ -201,7 +201,7 @@ internal static class Exports
             using var cts = new CancellationTokenSource(
                 request.TimeoutMs ?? RequestEnvelope.DefaultTimeoutMs);
 
-            var response = session.Executor
+            var response = session
                 .ExecuteAsync(build(request), cts.Token)
                 .GetAwaiter()
                 .GetResult();

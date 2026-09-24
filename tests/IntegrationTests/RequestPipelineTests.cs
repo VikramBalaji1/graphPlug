@@ -6,7 +6,7 @@ using MicrosoftGraph.Graph;
 using MicrosoftGraph.Graph.Operations;
 using MicrosoftGraph.Models;
 using MicrosoftGraph.Models.Envelopes;
-using static IntegrationTests.ScriptedTransport;
+using static TestSupport.RecordingTransport;
 
 namespace IntegrationTests;
 
@@ -20,21 +20,21 @@ public class RequestPipelineTests
 
     private static async Task<ResponseEnvelope> RequestAsync(
         RequestEnvelope request,
-        ScriptedTransport transport,
+        RecordingTransport transport,
         FakeTokenCredential credential,
         RetrySettings? retry = null)
     {
         await using var session = GraphSession.Create(
             credential, DefaultScope, retry, finalHandler: transport);
 
-        return await session.Executor.ExecuteAsync(
+        return await session.ExecuteAsync(
             new JsonRequestOperation(request), CancellationToken.None);
     }
 
     [Fact]
     public async Task Round_trips_a_request_through_the_whole_pipeline()
     {
-        var transport = new ScriptedTransport(
+        var transport = new RecordingTransport(
             Response(HttpStatusCode.OK, """{ "value": [ { "id": "1" } ] }""", ("request-id", "rid")));
 
         var response = await RequestAsync(
@@ -59,7 +59,7 @@ public class RequestPipelineTests
     [Fact]
     public async Task Attaches_the_bearer_token_to_graph_requests()
     {
-        var transport = new ScriptedTransport(Response(HttpStatusCode.OK, "{}"));
+        var transport = new RecordingTransport(Response(HttpStatusCode.OK, "{}"));
         var credential = new FakeTokenCredential();
 
         await RequestAsync(
@@ -73,7 +73,7 @@ public class RequestPipelineTests
     public async Task Withholds_the_bearer_token_from_an_off_host_absolute_url()
     {
         // A pre-authenticated download URL needs no token, and must not be handed one.
-        var transport = new ScriptedTransport(Response(HttpStatusCode.OK, "{}"));
+        var transport = new RecordingTransport(Response(HttpStatusCode.OK, "{}"));
         var credential = new FakeTokenCredential();
 
         await RequestAsync(
@@ -92,7 +92,7 @@ public class RequestPipelineTests
     [Fact]
     public async Task Retries_a_429_and_honours_Retry_After()
     {
-        var transport = new ScriptedTransport(
+        var transport = new RecordingTransport(
             Response((HttpStatusCode)429, """{ "error": { "code": "activityLimitReached" } }""",
                 ("Retry-After", "1")),
             Response(HttpStatusCode.OK, """{ "value": [] }"""));
@@ -112,7 +112,7 @@ public class RequestPipelineTests
     [Fact]
     public async Task Surfaces_retryAfterSeconds_when_the_retry_budget_is_exhausted()
     {
-        var transport = new ScriptedTransport(
+        var transport = new RecordingTransport(
             Response((HttpStatusCode)429, ThrottledBody, ("Retry-After", "1")),
             Response((HttpStatusCode)429, ThrottledBody, ("Retry-After", "7")));
 
@@ -150,7 +150,7 @@ public class RequestPipelineTests
         const string Claims =
             "eyJhY2Nlc3NfdG9rZW4iOnsibmJmIjp7ImVzc2VudGlhbCI6dHJ1ZSwidmFsdWUiOiIxNjAzNzQyODAwIn19fQ==";
 
-        var transport = new ScriptedTransport(
+        var transport = new RecordingTransport(
             Response(HttpStatusCode.Unauthorized, """{ "error": { "code": "InvalidAuthenticationToken" } }""",
                 ("WWW-Authenticate",
                  $"Bearer realm=\"\", authorization_uri=\"https://login.microsoftonline.com/common/oauth2/authorize\", error=\"insufficient_claims\", claims=\"{Claims}\"")),
@@ -170,7 +170,7 @@ public class RequestPipelineTests
     {
         // Kiota re-authenticates only on a claims challenge. A plain 401 is a real failure and
         // must reach the caller as one, not disappear into a retry loop.
-        var transport = new ScriptedTransport(
+        var transport = new RecordingTransport(
             Response(HttpStatusCode.Unauthorized,
                 """{ "error": { "code": "InvalidAuthenticationToken", "message": "Access token is empty." } }"""));
 
@@ -188,7 +188,7 @@ public class RequestPipelineTests
     [Fact]
     public async Task No_credential_material_reaches_the_envelope_on_any_path()
     {
-        var transport = new ScriptedTransport(
+        var transport = new RecordingTransport(
             Response(HttpStatusCode.Forbidden,
                 """{ "error": { "code": "accessDenied", "message": "Insufficient privileges." } }""",
                 ("WWW-Authenticate", "Bearer realm=\"graph\""),

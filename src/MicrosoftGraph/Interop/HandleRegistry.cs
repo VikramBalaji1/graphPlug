@@ -13,8 +13,6 @@ internal sealed class HandleRegistry<T>
     private readonly ConcurrentDictionary<long, T> _items = new();
     private long _lastHandle;
 
-    public int Count => _items.Count;
-
     public long Add(T item)
     {
         var handle = Interlocked.Increment(ref _lastHandle);
@@ -37,17 +35,17 @@ internal sealed class HandleRegistry<T>
     /// Removes and returns everything matching, so the caller can dispose it. Swept lazily on the
     /// next use rather than by a timer: a shared library should not own a background thread.
     /// </summary>
-    public IReadOnlyList<T> RemoveWhere(Func<T, bool> predicate)
+    public List<T> RemoveWhere(Func<T, bool> predicate)
     {
-        List<T>? removed = null;
+        var removed = new List<T>();
         foreach (var (handle, item) in _items)
         {
             if (predicate(item) && _items.TryRemove(handle, out var taken))
             {
-                (removed ??= []).Add(taken);
+                removed.Add(taken);
             }
         }
 
-        return removed ?? (IReadOnlyList<T>)[];
+        return removed;
     }
 }

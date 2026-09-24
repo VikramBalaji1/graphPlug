@@ -127,6 +127,9 @@ the reusability being bought, and it is measurable: the diff for adding certific
 - **No `IGraphSession` / `IGraphClient` interface.** One implementation, and the seam tests actually need
   is `HttpMessageHandler` — a platform abstraction that already exists. Inventing a parallel interface
   would add a type without adding a seam.
+- **No separate request executor.** An earlier draft split `GraphSession` from a `GraphRequestExecutor`
+  that held the `HttpClient` and delegated to operations. The session had one real member and the executor
+  had two; between them they were one object wearing two names, so they are one class.
 - **No DI container.** Seven collaborating classes and an explicit composition root. A container would add
   runtime reflection, which NativeAOT specifically penalises (§10).
 - **No repository/unit-of-work layer.** There is no persistence.
@@ -161,8 +164,8 @@ roughly thirty lines; names drawn from the Graph and Entra domain (`DeviceCodeSt
 │  │ Interop/Exports.cs        9 [UnmanagedCallersOnly] entrypoints     │  │
 │  │ Interop/HandleRegistry<T> sessions · pending authentications       │  │
 │  ├────────────────────────────────────────────────────────────────────┤  │
-│  │ Graph/GraphSession            aggregate root, one per handle       │  │
-│  │ Graph/GraphRequestExecutor    dispatches GraphOperation subclasses │  │
+│  │ Graph/GraphSession            aggregate root, one per handle;      │  │
+│  │                               owns the transport and dispatches    │  │
 │  │ Graph/Operations/*            json · download · upload · batch     │  │
 │  │ Graph/Upload/*                simple · chunked strategies          │  │
 │  ├────────────────────────────────────────────────────────────────────┤  │
@@ -186,7 +189,7 @@ roughly thirty lines; names drawn from the Graph and Entra domain (`DeviceCodeSt
 ```text
 src/MicrosoftGraph/
 ├── Authentication/
-│   ├── AuthenticationStrategy.cs         # abstract: CreateCredentialAsync, AccessModel
+│   ├── AuthenticationStrategy.cs         # abstract: CreateCredentialAsync, CreatePendingAuthentication
 │   ├── AuthenticationStrategyFactory.cs  # creds.type -> strategy
 │   ├── PendingAuthentication.cs          # abstract: BeginAsync / CompleteAsync
 │   ├── AppOnly/
@@ -203,8 +206,7 @@ src/MicrosoftGraph/
 ├── Diagnostics/
 │   └── GraphLog.cs                       # opt-in structured logging (§14)
 ├── Graph/
-│   ├── GraphSession.cs                   # credential + HttpClient + executor, IAsyncDisposable
-│   ├── GraphRequestExecutor.cs           # builds and runs operations
+│   ├── GraphSession.cs                   # credential + HttpClient + dispatch, IAsyncDisposable
 │   ├── GraphUrlBuilder.cs                # version + path + OData query
 │   ├── Operations/
 │   │   ├── GraphOperation.cs             # abstract template method
@@ -221,7 +223,7 @@ src/MicrosoftGraph/
 │   └── HandleRegistry.cs                 # HandleRegistry<T>, used twice
 ├── Models/
 │   ├── GraphErrorInfo.cs                 # the one place a failure becomes an error object
-│   ├── GraphCoreException.cs  CoreVersion.cs
+│   ├── GraphCoreException.cs             # also holds the core version constant
 │   ├── EntraFailure.cs                   # reads the AADSTS detail off the inner exception
 │   ├── ResponseHeaderFilter.cs           # the §6.7 allowlist, shared by two call sites
 │   ├── Envelopes/                        # ABI DTOs; request and response records live here
@@ -294,7 +296,7 @@ public static IntPtr GraphRequest(long handle, IntPtr reqJson)
         var session = SessionRegistry.Get(handle);          // throws if unknown
         using var cts = new CancellationTokenSource(request.TimeoutMs);
 
-        var response = session.Executor
+        var response = session
             .ExecuteAsync(new JsonRequestOperation(request), cts.Token)
             .GetAwaiter().GetResult();
 
@@ -508,9 +510,6 @@ error naming the missing field.
 ```csharp
 internal abstract class AuthenticationStrategy
 {
-    public abstract AccessModel AccessModel { get; }          // AppOnly | Delegated
-    public abstract bool RequiresInteraction { get; }
-
     /// Single-shot: credentials in, credential out. App-only flows only.
     public virtual Task<TokenCredential> CreateCredentialAsync(CancellationToken ct) =>
         throw new GraphCoreException("interactionRequired",
@@ -524,7 +523,12 @@ internal abstract class AuthenticationStrategy
 ```
 
 `ClientSecretStrategy` overrides the first; `DeviceCodeStrategy` and `AuthorizationCodeStrategy` override
-the second. Adding certificate or managed-identity auth later means one new subclass overriding
+the second.
+
+> An earlier draft of this class also carried `AccessModel` and `RequiresInteraction`. Both were removed:
+> nothing ever read them. The distinction they described is real and §7.1 documents it, but the base class
+> already enforces it by throwing — a strategy that cannot do single-shot says so, and one that needs no
+> interaction says so — which leaves the properties as labels nothing acted on. Adding certificate or managed-identity auth later means one new subclass overriding
 `CreateCredentialAsync` and one line in the factory — nothing else in the codebase moves. That is the
 concrete payoff of D11.
 

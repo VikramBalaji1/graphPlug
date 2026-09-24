@@ -23,7 +23,7 @@ public class ConcurrencyTests
 
     /// <summary>
     /// Answers every request with a fresh response, recording what it saw. Unlike
-    /// <see cref="ScriptedTransport"/> this holds no queue, so it is safe to hit in parallel.
+    /// <see cref="RecordingTransport"/> this holds no queue, so it is safe to hit in parallel.
     /// </summary>
     private sealed class ConcurrentTransport : HttpMessageHandler
     {
@@ -67,7 +67,7 @@ public class ConcurrencyTests
             var seen = new List<ResponseEnvelope>();
             for (var i = 0; i < PerThread; i++)
             {
-                seen.Add(await session.Executor.ExecuteAsync(
+                seen.Add(await session.ExecuteAsync(
                     new JsonRequestOperation(new RequestEnvelope
                     {
                         Method = "GET",
@@ -98,7 +98,7 @@ public class ConcurrencyTests
             new FakeTokenCredential(), Scopes, finalHandler: transport);
 
         await Task.WhenAll(Enumerable.Range(0, Threads * 4).Select(i => Task.Run(() =>
-            session.Executor.ExecuteAsync(
+            session.ExecuteAsync(
                 new JsonRequestOperation(new RequestEnvelope { Method = "GET", Path = $"/u/{i}" }),
                 CancellationToken.None))));
 
@@ -120,7 +120,7 @@ public class ConcurrencyTests
         var ordinals = await Task.WhenAll(Enumerable.Range(0, Threads * PerThread).Select(i =>
             Task.Run(async () =>
             {
-                var response = await session.Executor.ExecuteAsync(
+                var response = await session.ExecuteAsync(
                     new JsonRequestOperation(new RequestEnvelope
                     {
                         Method = "GET",
@@ -149,7 +149,7 @@ public class ConcurrencyTests
             var pages = 0;
             for (var page = 0; page < 5; page++)
             {
-                var response = await session.Executor.ExecuteAsync(
+                var response = await session.ExecuteAsync(
                     new JsonRequestOperation(new RequestEnvelope
                     {
                         Method = "GET",
@@ -180,7 +180,7 @@ public class ConcurrencyTests
         {
             try
             {
-                await session.Executor.ExecuteAsync(
+                await session.ExecuteAsync(
                     new JsonRequestOperation(new RequestEnvelope { Method = "GET", Path = $"/u/{i}" }),
                     CancellationToken.None);
                 return true;

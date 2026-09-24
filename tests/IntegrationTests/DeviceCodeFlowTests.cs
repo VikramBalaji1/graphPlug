@@ -6,7 +6,7 @@ using MicrosoftGraph.Graph;
 using MicrosoftGraph.Graph.Operations;
 using MicrosoftGraph.Models;
 using MicrosoftGraph.Models.Envelopes;
-using static IntegrationTests.ScriptedTransport;
+using static TestSupport.RecordingTransport;
 
 namespace IntegrationTests;
 
@@ -58,10 +58,10 @@ public class DeviceCodeFlowTests
 
         credential.Should().BeAssignableTo<TokenCredential>();
 
-        var graph = new ScriptedTransport(Response(HttpStatusCode.OK, """{ "displayName": "Alice" }"""));
+        var graph = new RecordingTransport(Response(HttpStatusCode.OK, """{ "displayName": "Alice" }"""));
         await using var session = GraphSession.Create(credential, Scopes, finalHandler: graph);
 
-        var response = await session.Executor.ExecuteAsync(
+        var response = await session.ExecuteAsync(
             new JsonRequestOperation(new RequestEnvelope { Method = "GET", Path = "/me" }),
             CancellationToken.None);
 

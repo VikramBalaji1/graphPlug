@@ -70,10 +70,9 @@ public class BatchOperationTests
         RequestEnvelope request, Func<JsonArray, JsonArray>? respond = null)
     {
         var transport = new BatchTransport(respond ?? ReversedSuccesses);
-        using var http = new HttpClient(transport);
-        var executor = new GraphRequestExecutor(http, new GraphUrlBuilder());
+        await using var session = new GraphSession(new HttpClient(transport));
 
-        return (await executor.ExecuteAsync(request, CancellationToken.None), transport);
+        return (await session.ExecuteAsync(request, CancellationToken.None), transport);
     }
 
     [Fact]
@@ -178,14 +177,13 @@ public class BatchOperationTests
     [Fact]
     public async Task A_batch_that_fails_outright_is_reported_as_one_failure()
     {
-        var transport = StubHttpMessageHandler.Returning(
+        var transport = RecordingTransport.Returning(
             HttpStatusCode.Forbidden,
             """{ "error": { "code": "accessDenied", "message": "no" } }""");
 
-        using var http = new HttpClient(transport);
-        var executor = new GraphRequestExecutor(http, new GraphUrlBuilder());
+        await using var session = new GraphSession(new HttpClient(transport));
 
-        var response = await executor.ExecuteAsync(Batch(3), CancellationToken.None);
+        var response = await session.ExecuteAsync(Batch(3), CancellationToken.None);
 
         response.Ok.Should().BeFalse();
         response.Status.Should().Be(403);
@@ -212,10 +210,9 @@ public class BatchOperationTests
     public async Task The_batch_is_posted_to_the_v1_batch_endpoint()
     {
         var transport = new BatchTransport(ReversedSuccesses);
-        using var http = new HttpClient(transport);
-        var executor = new GraphRequestExecutor(http, new GraphUrlBuilder());
+        await using var session = new GraphSession(new HttpClient(transport));
 
-        await executor.ExecuteAsync(Batch(1), CancellationToken.None);
+        await session.ExecuteAsync(Batch(1), CancellationToken.None);
 
         transport.ChunkSizes.Should().Equal(1);
     }

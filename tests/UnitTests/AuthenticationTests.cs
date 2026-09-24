@@ -79,15 +79,6 @@ public class AuthenticationTests
     }
 
     [Fact]
-    public void Client_secret_reports_the_app_only_access_model_and_needs_no_human()
-    {
-        var strategy = new ClientSecretStrategy(ClientSecret());
-
-        strategy.AccessModel.Should().Be(AccessModel.AppOnly);
-        strategy.RequiresInteraction.Should().BeFalse();
-    }
-
-    [Fact]
     public async Task Client_secret_produces_an_azure_identity_credential()
     {
         var credential = await new ClientSecretStrategy(ClientSecret())
@@ -118,10 +109,6 @@ public class AuthenticationTests
     /// <summary>Stands in for the delegated strategies until they land (§15 milestone 3).</summary>
     private sealed class InteractiveOnlyStrategy : AuthenticationStrategy
     {
-        public override AccessModel AccessModel => AccessModel.Delegated;
-
-        public override bool RequiresInteraction => true;
-
         public override IReadOnlyList<string> Scopes => ["User.Read"];
     }
 }

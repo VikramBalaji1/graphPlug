@@ -3,23 +3,12 @@ using MicrosoftGraph.Models;
 
 namespace MicrosoftGraph.Authentication;
 
-/// <summary>Which Entra access model a strategy implements (§7.1).</summary>
-internal enum AccessModel
-{
-    AppOnly,
-    Delegated,
-}
-
 /// <summary>
 /// One Entra sign-in method (§7.4). Adding a flow is a new subclass plus one case in
 /// <see cref="AuthenticationStrategyFactory"/>; nothing else in the core moves.
 /// </summary>
 internal abstract class AuthenticationStrategy
 {
-    public abstract AccessModel AccessModel { get; }
-
-    public abstract bool RequiresInteraction { get; }
-
     /// <summary>Scopes to request. App-only resolves to <c>.default</c>; delegated must be explicit (§7.3).</summary>
     public abstract IReadOnlyList<string> Scopes { get; }
 

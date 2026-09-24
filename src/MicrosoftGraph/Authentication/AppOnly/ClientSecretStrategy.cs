@@ -29,10 +29,6 @@ internal sealed class ClientSecretStrategy : AuthenticationStrategy
         Scopes = credentials.Scopes is { Length: > 0 } scopes ? scopes : [DefaultScope];
     }
 
-    public override AccessModel AccessModel => AccessModel.AppOnly;
-
-    public override bool RequiresInteraction => false;
-
     public override IReadOnlyList<string> Scopes { get; }
 
     public override Task<TokenCredential> CreateCredentialAsync(CancellationToken cancellationToken)

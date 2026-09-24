@@ -191,7 +191,7 @@ class GraphClient:
             raise
 
     @classmethod
-    def begin_interactive(
+    def _begin_interactive(
         cls,
         tenant_id: str,
         client_id: str,
@@ -226,7 +226,7 @@ class GraphClient:
         The listener binds to loopback and accepts exactly one request. ``state`` travels back to
         the core for validation rather than being checked here.
         """
-        flow = cls.begin_interactive(tenant_id, client_id, scopes, redirect_uri, authority_host)
+        flow = cls._begin_interactive(tenant_id, client_id, scopes, redirect_uri, authority_host)
 
         try:
             if not _auth.open_browser(flow.authorize_url or ""):
@@ -275,9 +275,6 @@ class GraphClient:
 
     def patch(self, path: str, body: Any = None, **options: Any) -> Any:
         return self.request("PATCH", path, body=body, **options).get("body")
-
-    def put(self, path: str, body: Any = None, **options: Any) -> Any:
-        return self.request("PUT", path, body=body, **options).get("body")
 
     def delete(self, path: str, **options: Any) -> Any:
         return self.request("DELETE", path, **options).get("body")

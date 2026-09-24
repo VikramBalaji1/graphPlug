@@ -9,7 +9,7 @@ public class HeaderHandlingTests
     [Fact]
     public async Task Forwards_caller_supplied_request_headers()
     {
-        var transport = StubHttpMessageHandler.Returning(HttpStatusCode.OK, """{ "value": [] }""");
+        var transport = RecordingTransport.Returning(HttpStatusCode.OK, """{ "value": [] }""");
 
         await OperationRunner.RunAsync(
             new RequestEnvelope
@@ -30,7 +30,7 @@ public class HeaderHandlingTests
     [InlineData("AUTHORIZATION")]
     public async Task Rejects_a_caller_supplied_Authorization_header(string name)
     {
-        var transport = StubHttpMessageHandler.Returning(HttpStatusCode.OK, "{}");
+        var transport = RecordingTransport.Returning(HttpStatusCode.OK, "{}");
 
         var act = () => OperationRunner.RunAsync(
             new RequestEnvelope
@@ -50,7 +50,7 @@ public class HeaderHandlingTests
     [Fact]
     public async Task Returns_only_allowlisted_response_headers()
     {
-        var transport = StubHttpMessageHandler.Returning(
+        var transport = RecordingTransport.Returning(
             HttpStatusCode.OK,
             "{}",
             ("request-id", "rid-1"),
@@ -70,7 +70,7 @@ public class HeaderHandlingTests
     [Fact]
     public async Task Never_serialises_credential_material_into_the_envelope()
     {
-        var transport = StubHttpMessageHandler.Returning(
+        var transport = RecordingTransport.Returning(
             HttpStatusCode.Unauthorized,
             """{ "error": { "code": "InvalidAuthenticationToken", "message": "Access token is empty." } }""",
             ("WWW-Authenticate", "Bearer realm=\"\", error=\"invalid_token\""),

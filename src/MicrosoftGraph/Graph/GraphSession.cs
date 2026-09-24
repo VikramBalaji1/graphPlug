@@ -3,13 +3,14 @@ using Microsoft.Graph;
 using Microsoft.Graph.Authentication;
 using Microsoft.Kiota.Http.HttpClientLibrary.Middleware;
 using Microsoft.Kiota.Http.HttpClientLibrary.Middleware.Options;
+using MicrosoftGraph.Graph.Operations;
 using MicrosoftGraph.Models.Envelopes;
 
 namespace MicrosoftGraph.Graph;
 
 /// <summary>
 /// One handle's worth of state: a credential, an <see cref="HttpClient"/> built from Microsoft's
-/// handler pipeline, and the executor that runs operations over it (§8.1). Safe to share across
+/// handler pipeline, and the URL builder operations run against (§8.1). Safe to share across
 /// threads — <see cref="HttpClient"/> is thread-safe and Azure.Identity serialises token refresh.
 /// </summary>
 internal sealed class GraphSession : IAsyncDisposable
@@ -20,15 +21,20 @@ internal sealed class GraphSession : IAsyncDisposable
     /// </summary>
     private const string GraphHost = "graph.microsoft.com";
 
-    private readonly HttpClient _http;
-
-    private GraphSession(HttpClient http)
+    /// <summary>
+    /// A session over a transport that is already whatever it needs to be. Unit tests use this to
+    /// exercise an operation without the handler pipeline or a credential; <see cref="Create"/> is
+    /// the production path.
+    /// </summary>
+    internal GraphSession(HttpClient http)
     {
-        _http = http;
-        Executor = new GraphRequestExecutor(http, new GraphUrlBuilder());
+        Http = http;
+        Urls = new GraphUrlBuilder();
     }
 
-    public GraphRequestExecutor Executor { get; }
+    public HttpClient Http { get; }
+
+    public GraphUrlBuilder Urls { get; }
 
     /// <summary>
     /// Builds the session identically for both access models — once a <see cref="TokenCredential"/>
@@ -55,9 +61,23 @@ internal sealed class GraphSession : IAsyncDisposable
         return new GraphSession(GraphClientFactory.Create(handlers, finalHandler: finalHandler));
     }
 
+    public Task<ResponseEnvelope> ExecuteAsync(
+        GraphOperation operation, CancellationToken cancellationToken) =>
+        operation.ExecuteAsync(this, cancellationToken);
+
+    /// <summary>
+    /// Picks the operation a request describes. A batch is a composite rather than a
+    /// <see cref="GraphOperation"/>, so the choice lives here rather than at the ABI boundary.
+    /// </summary>
+    public Task<ResponseEnvelope> ExecuteAsync(
+        RequestEnvelope request, CancellationToken cancellationToken) =>
+        BatchOperation.Matches(request)
+            ? new BatchOperation(request).ExecuteAsync(this, cancellationToken)
+            : ExecuteAsync(new JsonRequestOperation(request), cancellationToken);
+
     public ValueTask DisposeAsync()
     {
-        _http.Dispose();
+        Http.Dispose();
         return ValueTask.CompletedTask;
     }
 
