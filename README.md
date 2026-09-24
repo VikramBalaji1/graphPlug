@@ -7,8 +7,9 @@ Supports both Entra access models — **application-level access** (app-only, ap
 and **delegated access** (on behalf of a signed-in user, delegated permissions).
 
 > The design, and the reasoning behind every decision here, lives in [ARCHITECTURE.md](ARCHITECTURE.md).
-> This file is how to use and build the thing. When something fails, see
-> [docs/troubleshooting.md](docs/troubleshooting.md); for working code, see [samples/](samples).
+> This file is the overview. For a full walkthrough of the Python API see [USAGE.md](USAGE.md);
+> when something fails see [docs/troubleshooting.md](docs/troubleshooting.md); for working code
+> see [samples/](samples).
 
 ---
 
@@ -327,6 +328,7 @@ tests/IntegrationTests/   the full handler pipeline, controlled responses
 python/msgraph_simple/    the ctypes binding — stdlib only, no dependencies
 build/Dockerfile          the linux-x64 NativeAOT build
 samples/                  runnable scripts, one per access model
+USAGE.md                  the Python API, end to end
 docs/troubleshooting.md   every error code, what causes it, what to do
 ```
 
