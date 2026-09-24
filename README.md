@@ -183,9 +183,10 @@ available.
 ### History
 
 An earlier version of this package was a C# core compiled to a native library and reached through
-a C ABI. It has been removed. [ARCHITECTURE.md](ARCHITECTURE.md) describes that design and is kept
-because the reasoning behind most of the rules here — the header allowlist, the error taxonomy, the
-upload thresholds, the batch chunking — was worked out there and the Python code inherited it.
+a C ABI. It has been removed. Most of the rules here — the header allowlist, the error taxonomy, the
+upload thresholds, the batch chunking, the two access models — were worked out there and survived
+the rewrite unchanged, which is decent evidence they were about Graph rather than about C#.
+[ARCHITECTURE.md](ARCHITECTURE.md) documents the current design and records the reasoning.
 
 ---
 

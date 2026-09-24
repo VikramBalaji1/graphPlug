@@ -5,8 +5,8 @@
 A plug-and-play Python package for Microsoft Entra ID authentication and Microsoft Graph, with a
 resource layer that makes mail and calendar work one call rather than twenty lines of nested JSON.
 
-Pure Python, at the repository root. An earlier C# implementation has been removed;
-ARCHITECTURE.md describes it and is kept for the reasoning the Python code inherited.
+Pure Python, at the repository root. An earlier C# implementation has been removed.
+ARCHITECTURE.md documents the current design and why each rule is what it is.
 
 ## Tech Stack
 
