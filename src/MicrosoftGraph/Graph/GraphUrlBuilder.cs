@@ -14,6 +14,19 @@ internal sealed class GraphUrlBuilder
     private static readonly string[] SupportedVersions = [DefaultVersion, "beta"];
 
     /// <summary>
+    /// What tells a whole URL apart from a Graph path.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not <c>Uri.TryCreate(path, UriKind.Absolute, …)</c>, which is platform
+    /// dependent in exactly the wrong way: on Unix it returns <c>true</c> for <c>/users</c>,
+    /// parsing it as the file URI <c>file:///users</c>, so every relative Graph path would be
+    /// mistaken for an absolute one and rejected. On Windows it returns <c>false</c>. That is how
+    /// this survived a green suite on the development machine until the first Linux build.
+    /// A Graph path never contains a scheme separator; a URL always does.
+    /// </remarks>
+    private const string SchemeSeparator = "://";
+
+    /// <summary>
     /// An absolute <paramref name="path"/> is used verbatim and <paramref name="version"/> and
     /// <paramref name="query"/> are ignored, because the URL already carries them. That is what
     /// makes <c>nextLink</c> echo-back and pre-authenticated download URLs work with no special case.
@@ -29,8 +42,13 @@ internal sealed class GraphUrlBuilder
             throw new GraphCoreException("invalidRequest", "'path' is required");
         }
 
-        if (Uri.TryCreate(path, UriKind.Absolute, out var absolute))
+        if (path.Contains(SchemeSeparator, StringComparison.Ordinal))
         {
+            if (!Uri.TryCreate(path, UriKind.Absolute, out var absolute))
+            {
+                throw new GraphCoreException("invalidRequest", "'path' is not a valid absolute URL");
+            }
+
             return absolute.Scheme == Uri.UriSchemeHttps
                 ? absolute
                 : throw new GraphCoreException("invalidRequest", "an absolute 'path' must use https");

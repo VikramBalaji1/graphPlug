@@ -17,9 +17,13 @@ __all__ = ["GraphError", "call", "core"]
 #: unit, so a mismatched pair fails loudly rather than subtly (6.6).
 WHEEL_VERSION = "0.1.0"
 
+#: NativeAOT names the output after the assembly and adds no "lib" prefix, so this is
+#: MicrosoftGraph.so rather than the libMicrosoftGraph.so a Linux shared library usually is.
+#: Nothing dlopens it by bare name -- it is always loaded by full path -- so the produced name
+#: is used as-is rather than renamed to satisfy a convention that buys nothing here.
 _LIBRARY_NAMES = {
-    "linux": "libMicrosoftGraph.so",
-    "darwin": "libMicrosoftGraph.dylib",
+    "linux": "MicrosoftGraph.so",
+    "darwin": "MicrosoftGraph.dylib",
     "win32": "MicrosoftGraph.dll",
 }
 
@@ -80,12 +84,13 @@ class GraphError(Exception):
         )
 
 
-def _library_path() -> Path:
+def _library_path(lib_dir: Optional[Path] = None) -> Path:
+    """Locate the bundled library. ``lib_dir`` is a test seam, not a supported override."""
     name = _LIBRARY_NAMES.get(sys.platform)
     if name is None:
         raise GraphError(0, "unsupportedPlatform", f"no native library for {sys.platform!r}")
 
-    path = Path(__file__).resolve().parent / "_lib" / name
+    path = (lib_dir or Path(__file__).resolve().parent / "_lib") / name
     if not path.is_file():
         raise GraphError(
             0,

@@ -94,6 +94,37 @@ public class GraphUrlBuilderTests
         _urls.Build(DownloadUrl, null, null).OriginalString.Should().Be(DownloadUrl);
     }
 
+    [Theory]
+    [InlineData("/users")]
+    [InlineData("/me/drive/root:/big.zip:/content")]
+    [InlineData("/sites/root/lists")]
+    public void A_rooted_path_is_relative_on_every_platform(string path)
+    {
+        // On Unix, Uri.TryCreate(path, UriKind.Absolute, ...) returns true for a rooted path and
+        // parses it as file:///users. Trusting that alone breaks every Graph call on Linux, which
+        // is the only platform this ships to, while passing on the Windows dev machine.
+        _urls.Build(path, null, null)
+            .Should().Be(new Uri($"https://graph.microsoft.com/v1.0{path}"));
+    }
+
+    [Fact]
+    public void A_windows_style_local_path_is_not_treated_as_a_url()
+    {
+        // Parses as file:///C:/secrets on both platforms; it must not reach the wire as one.
+        _urls.Invoking(u => u.Build("C:\\secrets", null, null))
+            .Should().NotThrow();
+    }
+
+    [Theory]
+    [InlineData("ftp://example.com/x")]
+    [InlineData("file:///etc/passwd")]
+    public void Rejects_an_absolute_url_that_is_not_https(string path)
+    {
+        _urls.Invoking(u => u.Build(path, null, null))
+            .Should().Throw<GraphCoreException>()
+            .Which.Code.Should().Be("invalidRequest");
+    }
+
     [Fact]
     public void Rejects_a_non_https_absolute_url()
     {

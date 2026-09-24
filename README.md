@@ -257,7 +257,7 @@ dotnet format                       # style
 dotnet pack -c Release              # NuGet artefact for .NET consumers
 
 docker build -f build/Dockerfile -t msgraph-core-build .        # linux-x64 .so
-docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest"        msgraph-core-build cp /out/libMicrosoftGraph.so /dest/   # bundle it into the package
+docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest"        msgraph-core-build cp /out/MicrosoftGraph.so /dest/   # bundle it into the package
 
 python -m unittest discover -s python/tests    # Python layer; ABI tests need the .so above
 python -m build python/                        # wheel, run inside Linux

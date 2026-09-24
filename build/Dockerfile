@@ -6,7 +6,7 @@
 #
 #   docker build -f build/Dockerfile -t msgraph-core-build .
 #   docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest" msgraph-core-build \
-#          cp /out/libMicrosoftGraph.so /dest/
+#          cp /out/MicrosoftGraph.so /dest/
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 
@@ -30,9 +30,9 @@ COPY . .
 RUN dotnet test --nologo
 
 RUN dotnet publish src/MicrosoftGraph -r linux-x64 -c Release -o /out \
- && test -f /out/libMicrosoftGraph.so
+ && test -f /out/MicrosoftGraph.so
 
 # Keep the image small: the build output is the point, not the SDK.
 FROM debian:trixie-slim AS artifact
-COPY --from=build /out/libMicrosoftGraph.so /out/libMicrosoftGraph.so
+COPY --from=build /out/MicrosoftGraph.so /out/MicrosoftGraph.so
 CMD ["true"]

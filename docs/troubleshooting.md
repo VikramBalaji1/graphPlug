@@ -16,7 +16,7 @@ failure, a bad secret, a malformed call.
 
 ### `libraryNotFound`
 
-> the native library is missing from the package at …/_lib/libMicrosoftGraph.so
+> the native library is missing from the package at …/_lib/MicrosoftGraph.so
 
 The wheel was built without the compiled core, or you are running from a source checkout that has
 never been built. Build it and copy it in:
@@ -24,7 +24,7 @@ never been built. Build it and copy it in:
 ```bash
 docker build -f build/Dockerfile -t msgraph-core-build .
 docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest" msgraph-core-build \
-       cp /out/libMicrosoftGraph.so /dest/
+       cp /out/MicrosoftGraph.so /dest/
 ```
 
 ### `unsupportedPlatform`

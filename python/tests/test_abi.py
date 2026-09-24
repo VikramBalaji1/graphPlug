@@ -6,7 +6,7 @@ when it is absent, so a clean checkout on a machine that cannot build it still r
 
     docker build -f build/Dockerfile -t msgraph-core-build .
     docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest" msgraph-core-build \\
-           cp /out/libMicrosoftGraph.so /dest/
+           cp /out/MicrosoftGraph.so /dest/
     python -m unittest discover -s python/tests
 """
 

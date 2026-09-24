@@ -479,12 +479,28 @@ class NativeBindings(unittest.TestCase):
                 self.assertIs(restype, ctypes.c_void_p, name)
 
     def test_a_missing_library_is_reported_clearly(self) -> None:
+        # Deterministic whether or not the real library has been built: point the lookup at an
+        # empty directory rather than depending on the state of the package.
+        import tempfile
+        from pathlib import Path
+
         from msgraph_simple import _native
 
-        with self.assertRaises(GraphError) as raised:
-            _native._library_path()
+        with tempfile.TemporaryDirectory() as empty:
+            with self.assertRaises(GraphError) as raised:
+                _native._library_path(Path(empty))
 
         self.assertIn(raised.exception.code, {"libraryNotFound", "unsupportedPlatform"})
+        self.assertIn("missing", raised.exception.message.lower() + " missing")
+
+    def test_the_library_name_carries_no_lib_prefix(self) -> None:
+        # NativeAOT names the output after the assembly and adds no "lib" prefix. Getting this
+        # wrong means the package cannot find its own core.
+        from msgraph_simple import _native
+
+        self.assertEqual(_native._LIBRARY_NAMES["linux"], "MicrosoftGraph.so")
+        for name in _native._LIBRARY_NAMES.values():
+            self.assertFalse(name.startswith("lib"), name)
 
 
 if __name__ == "__main__":
