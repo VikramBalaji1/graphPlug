@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using MicrosoftGraph.Interop;
 using MicrosoftGraph.Models;
 using MicrosoftGraph.Models.Envelopes;
 
@@ -84,9 +83,9 @@ public class EnvelopeSerializationTests
     public void Session_envelope_carries_the_core_version()
     {
         var json = JsonSerializer.Serialize(
-            new SessionEnvelope { Ok = true, Handle = 1, CoreVersion = Exports.CoreVersion },
+            new SessionEnvelope { Ok = true, Handle = 1, CoreVersion = CoreVersion.Value },
             GraphJsonContext.Default.SessionEnvelope);
 
-        json.Should().Contain("\"handle\":1").And.Contain($"\"coreVersion\":\"{Exports.CoreVersion}\"");
+        json.Should().Contain("\"handle\":1").And.Contain($"\"coreVersion\":\"{CoreVersion.Value}\"");
     }
 }

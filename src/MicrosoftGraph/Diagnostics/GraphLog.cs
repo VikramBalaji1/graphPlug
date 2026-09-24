@@ -32,13 +32,39 @@ internal static class GraphLog
     public const string LevelVariable = "MSGRAPH_LOG_LEVEL";
 
     /// <summary>Read once at startup; a library should not pay a lookup per request.</summary>
-    internal static GraphLogLevel Level { get; set; } =
+    private static readonly GraphLogLevel ConfiguredLevel =
         ParseLevel(Environment.GetEnvironmentVariable(LevelVariable));
 
-    /// <summary>Overridable so tests can capture output without touching the console.</summary>
-    internal static TextWriter Writer { get; set; } = Console.Error;
+    /// <summary>
+    /// A test-only redirection, scoped to one asynchronous flow rather than the whole process.
+    /// Production never sets it, so the production path has no mutable global state at all.
+    /// </summary>
+    private static readonly AsyncLocal<Redirection?> Scope = new();
+
+    internal static GraphLogLevel Level => Scope.Value?.Level ?? ConfiguredLevel;
+
+    private static TextWriter Writer => Scope.Value?.Writer ?? Console.Error;
 
     public static bool IsEnabled(GraphLogLevel level) => level <= Level;
+
+    /// <summary>
+    /// Captures this flow's output at the given level until the returned handle is disposed.
+    /// Because the override rides on <see cref="AsyncLocal{T}"/>, two tests can do this at once
+    /// without seeing each other's lines.
+    /// </summary>
+    internal static IDisposable Capture(GraphLogLevel level, TextWriter writer)
+    {
+        var previous = Scope.Value;
+        Scope.Value = new Redirection(level, writer);
+        return new Restore(previous);
+    }
+
+    private sealed record Redirection(GraphLogLevel Level, TextWriter Writer);
+
+    private sealed class Restore(Redirection? previous) : IDisposable
+    {
+        public void Dispose() => Scope.Value = previous;
+    }
 
     public static void RequestCompleted(
         string method, Uri uri, int status, TimeSpan elapsed, string? requestId, string? errorCode)

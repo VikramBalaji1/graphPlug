@@ -21,9 +21,6 @@ namespace MicrosoftGraph.Interop;
 /// </remarks>
 internal static class Exports
 {
-    /// <summary>Compared against the wheel's version at load time; the pair ships as one unit (§6.6).</summary>
-    public const string CoreVersion = "0.1.0";
-
     private static readonly HandleRegistry<GraphSession> Sessions = new();
 
     private static readonly HandleRegistry<PendingAuthentication> PendingFlows = new();
@@ -47,7 +44,7 @@ internal static class Exports
             GraphLog.SessionEvent("sessionCreated", handle);
 
             return Emit(
-                new SessionEnvelope { Ok = true, Handle = handle, CoreVersion = CoreVersion },
+                new SessionEnvelope { Ok = true, Handle = handle, CoreVersion = Models.CoreVersion.Value },
                 GraphJsonContext.Default.SessionEnvelope);
         }
         catch (Exception ex)
@@ -103,7 +100,7 @@ internal static class Exports
             GraphLog.SessionEvent("sessionCreated", handle);
 
             return Emit(
-                new SessionEnvelope { Ok = true, Handle = handle, CoreVersion = CoreVersion },
+                new SessionEnvelope { Ok = true, Handle = handle, CoreVersion = Models.CoreVersion.Value },
                 GraphJsonContext.Default.SessionEnvelope);
         }
         catch (Exception ex)

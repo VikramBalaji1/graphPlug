@@ -102,7 +102,37 @@ def _load() -> ctypes.CDLL:
         # Omitting these is the classic way to corrupt pointers on 64-bit platforms.
         function.argtypes = argtypes
         function.restype = restype
+
+    _verify_core_version(library)
     return library
+
+
+def _verify_core_version(library: ctypes.CDLL) -> None:
+    """Check the pair before anything real runs (6.6).
+
+    Every envelope reports ``coreVersion``, including a rejected one, so an empty credentials
+    envelope is enough: the core parses nothing, creates no session and touches no network, and
+    the error it returns still carries the version. A mismatch here is a packaging fault, and it
+    is far better caught at import than as a strange failure three calls later.
+    """
+    pointer = library.graph_client_create(b"")
+    if not pointer:
+        raise GraphError(0, "nullPointer", "the core returned no envelope during version check")
+
+    try:
+        envelope = json.loads(ctypes.string_at(pointer).decode("utf-8"))
+    finally:
+        library.graph_free(pointer)
+
+    reported = envelope.get("coreVersion")
+    if reported is None:
+        raise GraphError(
+            0,
+            "coreVersionMismatch",
+            "the native library reported no version; it predates this package",
+        )
+
+    _check_core_version(envelope)
 
 
 _library: Optional[ctypes.CDLL] = None
@@ -142,7 +172,7 @@ def call(name: str, *args: Any) -> Dict[str, Any]:
 
 
 def _check_core_version(envelope: Dict[str, Any]) -> None:
-    """The ``.so`` and this file ship together; a mismatched pair must fail loudly (6.6)."""
+    """The library and this file ship together; a mismatched pair must fail loudly (6.6)."""
     reported = envelope.get("coreVersion")
     if reported is not None and reported != WHEEL_VERSION:
         raise GraphError(

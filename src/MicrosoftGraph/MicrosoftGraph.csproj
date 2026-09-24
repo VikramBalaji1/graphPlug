@@ -21,6 +21,10 @@
     <PackageId>MicrosoftGraph</PackageId>
     <Version>0.1.0</Version>
     <Description>Unified Microsoft Entra ID authentication and Microsoft Graph request handling.</Description>
+    <Authors>Arvind Vikram</Authors>
+    <Copyright>Copyright (c) 2026 Arvind Vikram</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -29,6 +33,11 @@
     <!-- Already transitive via Azure.Identity, so this adds no package to the graph. Needed
          directly because Azure.Identity exposes no PKCE code verifier (ARCHITECTURE.md 10). -->
     <PackageReference Include="Microsoft.Identity.Client" Version="4.83.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../LICENSE" Pack="true" PackagePath="" />
+    <None Include="../../README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 
   <ItemGroup>

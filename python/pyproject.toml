@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "Unified Microsoft Entra ID authentication and Microsoft Graph request handling."
 readme = "README.md"
 requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Arvind Vikram" }]
 
 # Deliberately empty. A package whose selling point is "plug and play" should not begin with a
 # dependency resolution; everything the binding needs is in the standard library.

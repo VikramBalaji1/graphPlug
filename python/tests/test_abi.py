@@ -234,6 +234,17 @@ class MemoryOwnership(unittest.TestCase):
 
 @requires_library
 class CoreVersionAgreement(unittest.TestCase):
+    def test_a_rejected_call_still_reports_the_version(self) -> None:
+        # This is what the load-time check relies on: no session, no network, still a version.
+        envelope = raw("graph_client_create", "")
+
+        self.assertFalse(envelope["ok"])
+        self.assertEqual(envelope["coreVersion"], _native.WHEEL_VERSION)
+
+    def test_loading_the_library_verifies_the_pair(self) -> None:
+        # core() runs the check on first use; reaching here means it agreed.
+        self.assertIsNotNone(_native.core())
+
     def test_the_library_and_the_wheel_agree(self) -> None:
         created = raw("graph_client_create", FAKE_CREDENTIALS)
         try:

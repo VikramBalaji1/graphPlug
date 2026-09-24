@@ -5,28 +5,31 @@ using MicrosoftGraph.Models.Envelopes;
 
 namespace UnitTests;
 
-/// <summary>
-/// One class, because the logger's level and writer are process-wide and xUnit does not run tests
-/// within a class in parallel.
-/// </summary>
 public class GraphLogTests : IDisposable
 {
     private readonly StringWriter _captured = new();
-    private readonly GraphLogLevel _originalLevel = GraphLog.Level;
-    private readonly TextWriter _originalWriter = GraphLog.Writer;
+    private readonly GraphLogLevel _configured = GraphLog.Level;
+
+    private IDisposable _capture;
 
     public GraphLogTests()
     {
-        GraphLog.Writer = _captured;
-        GraphLog.Level = GraphLogLevel.Info;
+        // Scoped to this test's asynchronous flow, so these run alongside everything else.
+        _capture = GraphLog.Capture(GraphLogLevel.Info, _captured);
     }
 
     public void Dispose()
     {
-        GraphLog.Level = _originalLevel;
-        GraphLog.Writer = _originalWriter;
+        _capture.Dispose();
         _captured.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>Re-scopes this test at a different level.</summary>
+    private void CaptureAt(GraphLogLevel level)
+    {
+        _capture.Dispose();
+        _capture = GraphLog.Capture(level, _captured);
     }
 
     private string Output => _captured.ToString();
@@ -38,7 +41,7 @@ public class GraphLogTests : IDisposable
     [Fact]
     public async Task Logs_nothing_at_all_when_switched_off()
     {
-        GraphLog.Level = GraphLogLevel.Off;
+        CaptureAt(GraphLogLevel.Off);
 
         await OperationRunner.RunAsync(
             new RequestEnvelope { Method = "GET", Path = "/users" },
@@ -100,7 +103,7 @@ public class GraphLogTests : IDisposable
     [Fact]
     public async Task Reports_failures_but_not_successes_at_the_error_level()
     {
-        GraphLog.Level = GraphLogLevel.Error;
+        CaptureAt(GraphLogLevel.Error);
 
         await OperationRunner.RunAsync(
             new RequestEnvelope { Method = "GET", Path = "/users" },
@@ -197,10 +200,45 @@ public class GraphLogTests : IDisposable
     [Fact]
     public void A_broken_writer_never_takes_the_process_down()
     {
-        GraphLog.Writer = new ThrowingWriter();
+        using var broken = GraphLog.Capture(GraphLogLevel.Info, new ThrowingWriter());
 
         FluentActions.Invoking(() => GraphLog.SessionEvent("sessionCreated", 1))
             .Should().NotThrow("a diagnostic must never be the thing that kills the caller");
+    }
+
+    [Fact]
+    public void The_configured_level_is_untouched_by_a_capture()
+    {
+        // The override rides on AsyncLocal, so the process-wide setting is never mutated.
+        _configured.Should().Be(GraphLog.ParseLevel(
+            Environment.GetEnvironmentVariable(GraphLog.LevelVariable)));
+    }
+
+    [Fact]
+    public async Task Two_concurrent_captures_do_not_see_each_other()
+    {
+        // The reason the whole suite can run in parallel again.
+        async Task<string> Isolated(string name)
+        {
+            await using var writer = new StringWriter();
+            using (GraphLog.Capture(GraphLogLevel.Info, writer))
+            {
+                await Task.Yield();
+                GraphLog.SessionEvent(name, 1);
+                await Task.Yield();
+                return writer.ToString();
+            }
+        }
+
+        var results = await Task.WhenAll(
+            Enumerable.Range(0, 24).Select(i => Isolated($"flow-{i}")));
+
+        for (var i = 0; i < results.Length; i++)
+        {
+            results[i].Should().Contain($"flow-{i}");
+            results[i].Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+                .Should().HaveCount(1, "each flow sees only its own line");
+        }
     }
 
     private sealed class ThrowingWriter : TextWriter

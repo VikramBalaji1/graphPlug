@@ -15,6 +15,12 @@ internal sealed record ErrorEnvelope
     /// <summary>Zero for failures with no HTTP response behind them (§9.2).</summary>
     public int Status { get; init; }
 
+    /// <summary>
+    /// Reported even on a failure, so the binding can verify the pair at load time with one
+    /// deliberately rejected call rather than waiting for the first real session (§6.6).
+    /// </summary>
+    public string CoreVersion => Models.CoreVersion.Value;
+
     public required GraphErrorInfo Error { get; init; }
 
     public static ErrorEnvelope From(Exception exception)

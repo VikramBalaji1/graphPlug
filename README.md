@@ -7,7 +7,8 @@ Supports both Entra access models — **application-level access** (app-only, ap
 and **delegated access** (on behalf of a signed-in user, delegated permissions).
 
 > The design, and the reasoning behind every decision here, lives in [ARCHITECTURE.md](ARCHITECTURE.md).
-> This file is how to use and build the thing.
+> This file is how to use and build the thing. When something fails, see
+> [docs/troubleshooting.md](docs/troubleshooting.md); for working code, see [samples/](samples).
 
 ---
 
@@ -120,6 +121,7 @@ case in one factory. Nothing else in the codebase moves.
 - **Retry and throttling.** Microsoft's supported handler pipeline. `429`, `503` and `504` are
   retried and `Retry-After` is honoured. No retry logic is written here. When the budget is
   exhausted, the failure still reports `retryAfterSeconds` so you can back off yourself.
+- **Not being throttled.** See below — it is mostly Microsoft's pipeline, not you.
 - **Pagination.** `@odata.nextLink` is lifted to the top of the response; Python owns the loop, so
   there is no cursor state in the native library to leak.
 - **Batching.** Chunked at Graph's limit of 20, and re-ordered by `id` so results align with what you
@@ -127,6 +129,32 @@ case in one factory. Nothing else in the codebase moves.
 - **Files.** Downloads stream to disk and never enter memory or a JSON envelope. Uploads switch to a
   chunked upload session above 4 MiB.
 - **Errors.** One shape for every failure — transport, auth, Graph or a bug in the core.
+
+### Staying on the right side of Graph's limits
+
+Microsoft throttles per application and per tenant rather than banning an IP, and the way to stay
+in good standing is simple: when Graph says `429` with a `Retry-After`, wait exactly that long.
+The handler pipeline does that for you, and no request in this package ever ignores it.
+
+What is and is not protecting you:
+
+| | |
+|---|---|
+| `Retry-After` is honoured | Always, on every retryable response. This is the mechanism that matters. |
+| Attempts are capped | Kiota's default is 3 retries per request. Raising it makes a throttled request *wait* longer, not send more. |
+| Exhaustion is visible | When the budget runs out, the error still carries `retryAfterSeconds` so you can back off yourself. |
+| Batching reduces volume | 20 requests go as one call. Chunks are issued sequentially, never in parallel. |
+| **No client-side rate limit** | Nothing caps requests per second. A tight `paged()` loop over a large collection goes as fast as Graph answers — which is fine, because Graph throttles you rather than banning you, and the pipeline then backs off correctly. |
+
+Tuning, if you want a request to give up sooner rather than sit in a retry loop:
+
+```python
+g = GraphClient.app_only(..., max_retries=2, max_delay_seconds=30)
+```
+
+`max_retries` is attempts after the first. `max_delay_seconds` is a ceiling on the **total** time
+spent retrying one request, not a per-attempt cap — the per-attempt interval stays whatever Graph
+asked for, because second-guessing that is how you get throttled harder.
 
 ---
 
@@ -296,6 +324,8 @@ tests/IntegrationTests/   the full handler pipeline, controlled responses
 
 python/msgraph_simple/    the ctypes binding — stdlib only, no dependencies
 build/Dockerfile          the linux-x64 NativeAOT build
+samples/                  runnable scripts, one per access model
+docs/troubleshooting.md   every error code, what causes it, what to do
 ```
 
 ---
@@ -358,4 +388,6 @@ Linux build runs:
 
 ## Licence
 
-Not yet chosen.
+[MIT](LICENSE). The Microsoft packages this wraps — Azure.Identity, Microsoft.Graph.Core and
+Microsoft.Identity.Client — are MIT too, so nothing here carries an obligation you did not choose.
+FluentAssertions 7.2.0 is Apache-2.0 but is a test-only dependency and is not distributed.
