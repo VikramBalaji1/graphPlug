@@ -31,10 +31,23 @@ class Scopes:
     # Files
     FILES_READ: Tuple[str, ...] = ("Files.Read",)
     FILES_READ_WRITE: Tuple[str, ...] = ("Files.ReadWrite",)
+    #: Other people's drives and SharePoint document libraries, not just your own.
+    FILES_READ_WRITE_ALL: Tuple[str, ...] = ("Files.ReadWrite.All",)
+
+    # Teams
+    TEAM_READ_BASIC: Tuple[str, ...] = ("Team.ReadBasic.All",)
+    CHANNEL_MESSAGE_SEND: Tuple[str, ...] = ("ChannelMessage.Send",)
+    #: Reading channel messages is a protected API: Microsoft must approve the app first.
+    CHANNEL_MESSAGE_READ: Tuple[str, ...] = ("ChannelMessage.Read.All",)
+    CHAT_READ_WRITE: Tuple[str, ...] = ("Chat.ReadWrite",)
 
     #: Everything the built-in resources can use. Convenient for a first run; narrow it afterwards.
     EVERYTHING: Tuple[str, ...] = (
-        "User.Read", "Mail.ReadWrite", "Mail.Send", "Calendars.ReadWrite",
+        "User.Read", "User.Read.All",
+        "Mail.ReadWrite", "Mail.Send",
+        "Calendars.ReadWrite",
+        "Files.ReadWrite",
+        "Team.ReadBasic.All", "ChannelMessage.Send", "Chat.ReadWrite",
     )
 
     @staticmethod

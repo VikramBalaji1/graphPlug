@@ -46,7 +46,7 @@ asyncio.run(main())
 - Generic authenticated requests to any Graph `v1.0` or `beta` endpoint.
 - OData parameters, custom headers, request bodies.
 - Pagination, batching, file download, file upload including large-file sessions.
-- A resource layer over mail and calendar.
+- A resource layer over mail, calendar, files, teams and users.
 - Consistent, structured error information.
 - Retry and throttling through Microsoft's supported middleware.
 - A pure-Python `py3-none-any` wheel.
@@ -87,7 +87,7 @@ today, or a named third is scheduled. Speculative extensibility is not a variati
 
 | Abstraction | Implementations today | Pattern |
 |---|---|---|
-| `GraphResource` | `Mail`, `Calendar` | Template method |
+| `GraphResource` | `Mail`, `Calendar`, `Files`, `Teams`, `Users` | Template method |
 | Upload strategy (`_upload_simple` / `_upload_chunked`, chosen by size) | simple `PUT`, chunked session | Strategy |
 | Credential | `ClientSecretCredential`, `_SyncCredentialAdapter`, `_MsalCredential` | Duck-typed on `get_token` |
 | Sign-in flow | device code, authorization code | Two-phase begin/complete |
@@ -125,7 +125,10 @@ over nesting; names from the Graph and Entra domain rather than from patterns.
 │        ├── _resources/base.py   GraphResource: list · get · create ·      │
 │        │        │               update · delete · get_many                │
 │        │        ├── mail.py     graph.mail     send · reply · inbox · …   │
-│        │        └── calendar.py graph.calendar schedule · upcoming · …    │
+│        │        ├── calendar.py graph.calendar schedule · upcoming · …    │
+│        │        ├── files.py    graph.files    upload · share_link · …    │
+│        │        ├── teams.py    graph.teams    post · channels · …        │
+│        │        └── users.py    graph.users    find · manager · photo …   │
 │        │                                                                  │
 │        ├── _operations.py  paging · batching · download · upload          │
 │        ├── _request.py     URL building · OData · header allowlist        │
@@ -375,30 +378,42 @@ One `httpx.AsyncClient` per `GraphClient`, so the connection pool and the token 
 
 ## 7. The resource layer
 
-This is where the plug-and-play goal lands. Graph's `sendMail` payload is roughly twenty lines of
-nested JSON — recipients as objects inside objects, a body with a content type, attachments
-base64-encoded with an `@odata.type` discriminator. A Teams meeting needs `isOnlineMeeting` *and*
-`onlineMeetingProvider`, plus `dateTime`/`timeZone` pairs. None of it is guessable, and all of it is
-built for you.
+This is where the plug-and-play goal lands. Each resource exists to absorb one piece of Graph that
+is not guessable from the call site:
+
+| Resource | The thing it absorbs |
+|---|---|
+| `Mail` | The `sendMail` payload: recipients as objects inside objects, a body with a content type, attachments base64-encoded behind an `@odata.type` discriminator |
+| `Calendar` | `isOnlineMeeting` paired with `onlineMeetingProvider` for a Teams link, attendees carrying a `type`, and `dateTime`/`timeZone` pairs rather than ISO strings |
+| `Files` | Drive addressing. `/me/drive/root:/reports/q3.xlsx:` by path versus `/me/drive/items/{id}` by id — including the *closing* colon, whose absence gives a 400 that mentions no colons |
+| `Teams` | A two-level lookup before a message can be posted, and the `chatMessage` body shape shared by channel posts, replies and chats |
+| `Users` | The `/me` versus `/users/{id}` fork on every directory call, and `ConsistencyLevel: eventual`, without which Graph refuses `$search`, `$count` and `endswith` with a bare 400 |
+
+`Files` resolves path-versus-id on one rule — a leading slash means a path — so a caller never
+writes a colon. `Users` defaults every `user` argument to the signed-in person.
 
 ```python
 await graph.mail.send(to=..., subject=..., body=..., html=True, attachments=[...])
-await graph.mail.reply(message_id, comment="Thanks")
-async for message in graph.mail.inbox(unread_only=True): ...
-
-event = await graph.calendar.schedule(subject=..., start=..., end=...,
-                                      attendees=[...], online=True)
-print(event["onlineMeeting"]["joinUrl"])
-
-slots = await graph.calendar.find_times(["a@x.com", "b@x.com"], duration_minutes=30)
+event = await graph.calendar.schedule(subject=..., start=..., end=..., online=True)
+await graph.files.upload("q3.xlsx", to="/reports/2026/q3.xlsx")
+await graph.teams.post(team_id, channel_id, "Report is up")
+boss = await graph.users.manager()
 ```
 
 `GraphResource` supplies `list`, `get`, `create`, `update`, `delete` and `get_many`; a subclass sets
 `path` and `scopes` and adds what is specific to it. `get_many`, `send_many` and `schedule_many`
 route through §6.4, so the fast path is the default rather than something a caller has to discover.
 
-Resources are attached to the client as attributes (`graph.mail`, `graph.calendar`). They are
-delegated-access features — there is no `/me` under application-level access.
+Resources are attached to the client as attributes (`graph.mail`, `graph.files`, …). Most are
+delegated-access features, because they hang off `/me`, which does not exist under
+application-level access. `Users` is the exception: it works under both, and its `user` arguments
+stop being optional when there is no signed-in person.
+
+> **A limit worth knowing rather than discovering.** Reading Teams channel messages with
+> *application* permissions is one of Graph's protected APIs — Microsoft must approve the app
+> before the call returns anything but 403, whatever consent the tenant has granted. Posting as a
+> signed-in person is unaffected. Nothing here can work around it, so `Teams` says so in its
+> docstring.
 
 **Adding a resource** is one file: subclass `GraphResource`, set the path and scopes, add the
 domain-specific methods, and attach it in `GraphClient.__init__`. Add one when there is a caller for
@@ -465,7 +480,8 @@ Each is a decision, not an oversight. Each has a trigger.
 | ROPC (username/password) | Breaks under MFA and Conditional Access; stores user passwords | Effectively never; device code covers the headless case properly |
 | Typed response models | Generic JSON reaches every `v1.0` and `beta` endpoint on day one (D9) | Never — anyone wanting typed builders should take `msgraph-sdk` if it ever resolves |
 | A sync surface | Async is the safe-concurrency choice (D3), and `asyncio.run` is one line | Enough callers are in sync codebases to justify a generated sync mirror |
-| More resources (Files, Teams, Users) | `GraphResource` is shaped for them; nothing is guessed in advance | There is a caller for one |
+| More resources (Contacts, ToDo, Planner, SharePoint sites) | `GraphResource` is shaped for them; nothing is guessed in advance | There is a caller for one |
+| Starting a new Teams chat, and @-mentions | Posting into an existing chat or channel is the common job; `POST /chats` and mention payloads are a step past it | Someone needs to open a conversation rather than continue one |
 | Response caching | Graph's `ETag`/`If-None-Match` is passthrough already | A measured hot path re-fetches unchanged data |
 | Dependency-aware batch partitioning | Sequential `dependsOn` within a chunk is correct (§6.4) | Someone uses ordered batches across a chunk boundary |
 | Per-request timeout parameter | The middleware's defaults cover the common case | A caller needs to bound one slow call differently from the rest |
@@ -478,7 +494,7 @@ Each is a decision, not an oversight. Each has a trigger.
 package's own. The seam is `httpx.MockTransport`, wrapped by the **real** `msgraph-core`
 middleware, so tests exercise the same retry and redirect path production does (D11).
 
-**120 tests**, in six files:
+**151 tests**, in seven files:
 
 | File | Covers |
 |---|---|
@@ -486,6 +502,7 @@ middleware, so tests exercise the same retry and redirect path production does (
 | `test_requests.py` | URL building, absolute passthrough, the scheme-separator rule, OData mapping, request-header forwarding, `Authorization` rejection, response allowlisting |
 | `test_operations.py` | Paging, chunking at 20, re-ordering by `id`, a failing sub-request not failing its siblings, the 4 MiB boundary, chunk alignment, download temp-then-rename |
 | `test_resources.py` | The exact `sendMail` and `event` payloads, field by field. This is where bugs would otherwise hide |
+| `test_files_teams_users.py` | Drive addressing by path and by id, that a large upload still reaches `createUploadSession`, the `chatMessage` shape, and that `ConsistencyLevel` is re-sent on page two |
 | `test_signin.py` | The two-phase orchestration: the code returns without waiting; a sign-in that fails before issuing a code does not hang; cancellation; PKCE conformance; the verifier never appearing in the authorize URL; `state` mismatch |
 | `test_errors_and_logging.py` | Graph error JSON → `GraphError`, `Retry-After` in both formats, chain flattening, the code table, and that no token, secret or header reaches a log line |
 

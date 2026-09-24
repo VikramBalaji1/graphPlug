@@ -27,10 +27,12 @@ in exchange, concurrency is handled for you and never has to be written by hand.
 - [Signing in](#signing-in)
 - [Mail](#mail)
 - [Calendar and meetings](#calendar-and-meetings)
+- [Files](#files)
+- [Teams and chat](#teams-and-chat)
+- [People and the directory](#people-and-the-directory)
 - [Generic requests](#generic-requests)
 - [Paging](#paging)
 - [Batching, and where the speed comes from](#batching-and-where-the-speed-comes-from)
-- [Files](#files)
 - [Errors](#errors)
 - [Logging](#logging)
 - [Concurrency and lifetime](#concurrency-and-lifetime)
@@ -274,6 +276,137 @@ series master instead of its occurrences — rarely what you want.
 
 ---
 
+## Files
+
+`graph.files` works on the signed-in person's OneDrive. Every method takes **either** a drive path
+(leading slash) **or** an item id — that one rule replaces Graph's colon syntax, which is the part
+everybody gets wrong:
+
+```text
+by path   /reports/q3.xlsx   ->  /me/drive/root:/reports/q3.xlsx:
+by id     01ABCDEF...        ->  /me/drive/items/01ABCDEF...
+```
+
+Note the *closing* colon. Leaving it off produces a 400 that mentions nothing about colons.
+
+```python
+await graph.files.upload("q3.xlsx")                          # to the drive root
+await graph.files.upload("q3.xlsx", to="/reports/2026/q3.xlsx")
+await graph.files.download("/reports/2026/q3.xlsx", "local.xlsx")
+
+async for item in graph.files.folder("/reports"):            # direct children
+    print(item["name"], item["size"])
+
+async for hit in graph.files.search("quarterly"):            # name and content
+    print(hit["webUrl"])
+
+await graph.files.make_folder("/reports/2027")
+info = await graph.files.metadata("/reports/2026/q3.xlsx")
+await graph.files.remove("/reports/old.xlsx")                # to the recycle bin
+
+url = await graph.files.share_link("/reports/2026/q3.xlsx", kind="edit")
+```
+
+`upload` replaces whatever is at the destination and switches to a resumable session above 4 MiB on
+its own — the path you write is the same either way.
+
+`share_link` takes `kind` of `view`, `edit` or `embed` and `scope` of `anonymous`, `organization`
+or `users`, and returns just the URL. `anonymous` is frequently disabled by tenant policy, which
+arrives as an `accessDenied` error rather than a working link.
+
+### Any endpoint, not just OneDrive
+
+`graph.files` is a convenience over two generic methods that work against any Graph endpoint
+returning or accepting bytes — a message attachment, a SharePoint library, a report export:
+
+```python
+result = await graph.download("/me/drive/items/{id}/content", "local.bin")
+result["bytesWritten"]
+
+result = await graph.upload("/me/drive/root:/big.zip:/content", "big.zip")
+result["bytesSent"]
+```
+
+Use these for a drive that is not your own — someone else's, or a SharePoint library — with
+`Files.ReadWrite.All`.
+
+Downloads stream to disk; the bytes never enter memory or a JSON envelope. The destination
+directory must already exist, and a failed download leaves nothing behind because it writes to a
+temporary name and renames only on success.
+
+Uploads switch to a resumable session above 4 MiB automatically, in 10 MiB chunks, resuming from
+whatever Graph says it already has.
+
+---
+
+## Teams and chat
+
+```python
+async for team in graph.teams.mine():
+    print(team["displayName"], team["id"])
+
+channel = await graph.teams.channel_by_name(team_id, "deploys")   # so you need not carry ids
+
+posted = await graph.teams.post(team_id, channel["id"], "Deploy is green")
+await graph.teams.reply(team_id, channel["id"], posted["id"], "confirmed in prod")
+
+await graph.teams.post(team_id, channel["id"], "<b>Incident</b>", html=True,
+                       subject="SEV-2", importance="urgent")
+
+async for message in graph.teams.messages(team_id, channel["id"]):
+    print(message["from"]["user"]["displayName"], message["body"]["content"])
+
+async for chat in graph.teams.chats():
+    await graph.teams.send_chat(chat["id"], "on my way")
+```
+
+Replies attach to a thread's **root** message, because Graph has no reply-to-a-reply — so the id
+you pass `reply` is the one `post` returned.
+
+> **Worth knowing before you plan around it.** *Reading* channel messages with **application**
+> permissions is one of Graph's protected APIs: Microsoft has to approve the app first, and until
+> they do the call returns 403 whatever consent the tenant has granted. Posting as a signed-in
+> person is not affected.
+
+---
+
+## People and the directory
+
+```python
+me = await graph.users.me()
+
+async for person in graph.users.find("smith"):        # display name or mail address
+    print(person["displayName"], person["mail"])
+
+alice = await graph.users.by_email("alice@contoso.com")
+boss = await graph.users.manager()                    # yours, or manager("alice@contoso.com")
+
+async for report in graph.users.reports("alice@contoso.com"):
+    print(report["displayName"])
+
+async for group in graph.users.groups():
+    print(group["displayName"])
+
+await graph.users.photo("alice.jpg", user="alice@contoso.com", size="96x96")
+```
+
+Everywhere a `user` argument is optional, omitting it means the signed-in person — `/me` rather
+than `/users/{id}`. Under application-level access there is no signed-in person, so those calls
+need an explicit id.
+
+`find` uses Graph's `$search`, which requires a `ConsistencyLevel: eventual` header. The resource
+sends it, including on every subsequent page. Without it Graph answers a bare 400 that explains
+none of this.
+
+`by_email` is not the same as `get(address)`: `get` resolves the *user principal name*, which is
+often but not always the mail address. `by_email` filters on `mail` itself and raises
+`itemNotFound` rather than quietly returning the wrong person.
+
+Bulk lookups go through `get_many`, which batches — see
+[Batching](#batching-and-where-the-speed-comes-from).
+
+---
+
 ## Generic requests
 
 Anything the resources do not cover:
@@ -359,25 +492,6 @@ messages = await graph.mail.get_many(message_ids)
 
 A `dependsOn` chain must stay within one group of 20 — a dependency spanning a chunk boundary
 fails at Graph.
-
----
-
-## Files
-
-```python
-result = await graph.download("/me/drive/items/{id}/content", "local.bin")
-result["bytesWritten"]
-
-result = await graph.upload("/me/drive/root:/big.zip:/content", "big.zip")
-result["bytesSent"]
-```
-
-Downloads stream to disk — the bytes never enter memory or a JSON envelope. The destination
-directory must already exist; a failed download leaves nothing behind, because it writes to a
-temporary name and renames only on success.
-
-Uploads switch to a resumable session above 4 MiB automatically, in 10 MiB chunks, resuming from
-whatever Graph says it already has.
 
 ---
 
@@ -470,15 +584,21 @@ subclass and nothing else moves:
 ```python
 from msgraph_simple._resources.base import GraphResource
 
-class Teams(GraphResource):
-    path = "/me/joinedTeams"
-    scopes = ("Team.ReadBasic.All",)
+class Contacts(GraphResource):
+    path = "/me/contacts"
+    scopes = ("Contacts.ReadWrite",)
 
-    async def channels(self, team_id: str):
-        return await self._client.get(f"/teams/{team_id}/channels")
+    async def add(self, name: str, email: str):
+        return await self.create({
+            "displayName": name,
+            "emailAddresses": [{"address": email, "name": name}],
+        })
 
-graph.teams = Teams(graph)
+graph.contacts = Contacts(graph)
 ```
+
+`mail.py`, `calendar.py`, `files.py`, `teams.py` and `users.py` are all this shape, and each is
+worth reading as a worked example.
 
 `list`, `get`, `create`, `update`, `delete` and `get_many` come from the base. `_action` posts to
 an action on one item; `_collection_action` posts to one on the collection's owner.
@@ -511,13 +631,21 @@ an action on one item; `_collection_action` posts to one on the collection's own
 
 ### Resources
 
-Both inherit `list`, `get`, `create`, `update`, `delete`, `get_many` from `GraphResource`.
+All five inherit `list`, `get`, `create`, `update`, `delete` and `get_many` from `GraphResource`.
 
 **`graph.mail`** — `send`, `send_many`, `compose`, `reply`, `forward`, `inbox`, `mark_read`,
 `move`, `delete_many`
 
 **`graph.calendar`** — `schedule`, `schedule_many`, `compose`, `upcoming`, `respond`, `cancel`,
 `find_times`, `free_busy`
+
+**`graph.files`** — `upload`, `download`, `folder`, `search`, `metadata`, `make_folder`, `remove`,
+`share_link`
+
+**`graph.teams`** — `mine`, `channels`, `channel_by_name`, `members`, `post`, `reply`, `messages`,
+`chats`, `send_chat`
+
+**`graph.users`** — `me`, `find`, `by_email`, `manager`, `reports`, `groups`, `photo`
 
 ### `GraphError`
 

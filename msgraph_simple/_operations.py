@@ -42,14 +42,21 @@ BatchRequest = Union[Tuple[str, str], Mapping[str, Any]]
 # ── paging ───────────────────────────────────────────────────────────────────
 
 
-async def paged(transport: Transport, url: str) -> AsyncIterator[Dict[str, Any]]:
+async def paged(
+    transport: Transport,
+    url: str,
+    headers: Optional[Mapping[str, str]] = None,
+) -> AsyncIterator[Dict[str, Any]]:
     """Walk every page, yielding items.
 
     Nothing buffers the whole collection, and abandoning the generator leaks nothing: the next
     link is a complete, self-describing cursor held only by the caller's loop.
+
+    ``headers`` is re-sent on every page, because a header that qualifies the query -- Graph's
+    ``ConsistencyLevel: eventual`` for advanced queries -- has to hold for the whole walk.
     """
     while url:
-        envelope = await transport.json("GET", url, operation="paged")
+        envelope = await transport.json("GET", url, headers=headers, operation="paged")
         body = envelope.get("body") or {}
 
         for item in body.get("value", []):

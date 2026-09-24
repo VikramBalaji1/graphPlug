@@ -2,6 +2,9 @@
 
 from .base import GraphResource
 from .calendar import Calendar
+from .files import Files
 from .mail import Mail
+from .teams import Teams
+from .users import Users
 
-__all__ = ["GraphResource", "Calendar", "Mail"]
+__all__ = ["GraphResource", "Calendar", "Files", "Mail", "Teams", "Users"]

@@ -45,21 +45,28 @@ matter.
 
 ## What you get
 
-**A resource layer.** Graph's `sendMail` payload is roughly twenty lines of nested JSON —
-recipients as objects inside objects, a body with a content type, attachments base64-encoded with
-an `@odata.type` discriminator. A Teams meeting needs `isOnlineMeeting` *and*
-`onlineMeetingProvider`, and times as `dateTime`/`timeZone` pairs. All of that is built for you.
+**A resource layer, over five areas.** Graph's `sendMail` payload is roughly twenty lines of
+nested JSON — recipients as objects inside objects, a body with a content type, attachments
+base64-encoded with an `@odata.type` discriminator. A Teams meeting needs `isOnlineMeeting` *and*
+`onlineMeetingProvider`. A drive item is `/me/drive/root:/reports/q3.xlsx:` — with a closing colon
+everybody forgets. A user search returns a bare 400 without a `ConsistencyLevel` header. All of
+that is built for you.
 
 ```python
 await graph.mail.send(to=..., subject=..., body=..., attachments=[...])
-await graph.mail.reply(message_id, comment="Thanks")
 async for message in graph.mail.inbox(unread_only=True): ...
 
-event = await graph.calendar.schedule(subject=..., start=..., end=...,
-                                      attendees=[...], online=True)
+event = await graph.calendar.schedule(subject=..., start=..., end=..., online=True)
 print(event["onlineMeeting"]["joinUrl"])
 
-slots = await graph.calendar.find_times(["a@x.com", "b@x.com"], duration_minutes=30)
+await graph.files.upload("q3.xlsx", to="/reports/2026/q3.xlsx")
+url = await graph.files.share_link("/reports/2026/q3.xlsx", kind="edit")
+
+channel = await graph.teams.channel_by_name(team_id, "deploys")
+await graph.teams.post(team_id, channel["id"], f"Report is up: {url}")
+
+async for person in graph.users.find("smith"): ...
+boss = await graph.users.manager()
 ```
 
 **Everything generic, too.** `get`, `post`, `patch`, `delete`, `paged`, `batch`, `download`,
@@ -77,7 +84,8 @@ slots = await graph.calendar.find_times(["a@x.com", "b@x.com"], duration_minutes
 semaphore. You never write `asyncio.gather`, and you do not get throttled for going too wide.
 
 **Adding a resource is one subclass.** `list`, `get`, `create`, `update`, `delete` and `get_many`
-come from a shared base; a new resource sets a path and adds whatever is specific to it.
+come from a shared base; a new resource sets a path and adds whatever is specific to it. The five
+that ship are each about 150 lines and are worth reading as worked examples.
 
 ---
 
@@ -156,7 +164,7 @@ addresses. Headers, bodies and credential material are never logged.
 
 ```bash
 pip install -e .
-python -m unittest discover -s tests     # 120 tests
+python -m unittest discover -s tests     # 151 tests
 python -m build --wheel
 ```
 
@@ -166,9 +174,10 @@ No container, no compiler, no platform-specific build.
 
 ## Status
 
-The package is complete and tested. **120 tests**, covering the middleware contract, request
-construction, paging, batching, file round-trips, the exact mail and calendar payloads, the error
-taxonomy, concurrency bounds, the sign-in orchestration and the logger.
+The package is complete and tested. **151 tests**, covering the middleware contract, request
+construction, paging, batching, file round-trips, the exact paths and payloads all five resources
+build, the error taxonomy, concurrency bounds, the sign-in orchestration, the drive addressing
+rules and the logger.
 
 ### What still needs a tenant
 

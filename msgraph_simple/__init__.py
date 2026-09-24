@@ -30,7 +30,7 @@ from . import _auth, _log, _operations
 from ._errors import GraphError
 from ._http import DEFAULT_MAX_CONCURRENCY, Transport
 from ._request import DEFAULT_VERSION, build_url, odata, reject_authorization
-from ._resources import Calendar, Mail
+from ._resources import Calendar, Files, Mail, Teams, Users
 from ._scopes import Scopes
 
 __all__ = ["GraphClient", "GraphError", "PendingSignIn", "Scopes"]
@@ -97,6 +97,12 @@ class GraphClient:
         self.mail = Mail(self)
         #: Events on the signed-in user's calendar.
         self.calendar = Calendar(self)
+        #: Files in the signed-in user's drive.
+        self.files = Files(self)
+        #: Teams, channels, channel messages and chats.
+        self.teams = Teams(self)
+        #: People in the directory, and the signed-in person.
+        self.users = Users(self)
 
     # ── application-level access ─────────────────────────────────────────────
 
@@ -264,13 +270,23 @@ class GraphClient:
     async def delete(self, path: str, **options: Any) -> Any:
         return (await self.request("DELETE", path, **options)).get("body")
 
-    def paged(self, path: str, version: Optional[str] = None, **options: Any) -> AsyncIterator[Dict[str, Any]]:
+    def paged(
+        self,
+        path: str,
+        version: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        **options: Any,
+    ) -> AsyncIterator[Dict[str, Any]]:
         """Walk every page, yielding items.
 
         An async generator, so nothing buffers the whole collection and abandoning it half way
         leaks nothing.
         """
-        return _operations.paged(self._transport, build_url(path, version, odata(options)))
+        return _operations.paged(
+            self._transport,
+            build_url(path, version, odata(options)),
+            reject_authorization(headers) or None,
+        )
 
     async def batch(
         self, requests: Sequence[_operations.BatchRequest], version: Optional[str] = None

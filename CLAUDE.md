@@ -3,7 +3,8 @@
 ## Overview
 
 A plug-and-play Python package for Microsoft Entra ID authentication and Microsoft Graph, with a
-resource layer that makes mail and calendar work one call rather than twenty lines of nested JSON.
+resource layer that makes mail, calendar, files, teams and users one call each rather than twenty
+lines of nested JSON.
 
 Pure Python, at the repository root. An earlier C# implementation has been removed.
 ARCHITECTURE.md documents the current design and why each rule is what it is.
@@ -29,7 +30,7 @@ msgraph_simple/
 ├── _operations.py    paging, batching, download, the two upload strategies
 ├── _log.py           opt-in structured logging
 ├── _scopes.py        named permissions
-└── _resources/       base.py, mail.py, calendar.py
+└── _resources/       base.py, mail.py, calendar.py, files.py, teams.py, users.py
 
 tests/     the suite
 samples/   runnable scripts
@@ -83,8 +84,9 @@ Use an async generator where it provides a natural interface for paginated opera
 
 ### `_resources/`
 
-Mail, calendar, and the shared base they derive from. A resource declares a path and its scopes and
-adds only what is specific to it. Add a resource when there is a caller for it, not before.
+Mail, calendar, files, teams, users, and the shared base they derive from. A resource declares a
+path and its scopes and adds only what is specific to it. Add a resource when there is a caller for
+it, not before.
 
 ## Authentication
 
@@ -172,7 +174,7 @@ Tests cover:
 * Error handling
 * Retry behaviour, including that the middleware pipeline actually engages
 * Batching, upload strategy selection and file round-trips
-* The exact payloads the mail and calendar resources build
+* The exact paths and payloads every resource builds
 * Concurrency bounds
 
 Live Graph tests use dedicated test environments and credentials, and skip without them.
