@@ -1,396 +1,196 @@
-# MicrosoftGraph
+# msgraph_simple
 
-A minimal C#/.NET core for Microsoft Entra ID authentication and Microsoft Graph request handling,
-compiled to a native shared library and consumed from Python through `ctypes`.
+Plug-and-play Microsoft Graph for Python. Sending a mail is one call. Booking a Teams meeting is
+one call. Authentication, retries, throttling, paging, batching and large file transfers happen
+underneath.
 
-Supports both Entra access models — **application-level access** (app-only, application permissions)
-and **delegated access** (on behalf of a signed-in user, delegated permissions).
+```python
+import asyncio
+from msgraph_simple import GraphClient, Scopes
 
-> The design, and the reasoning behind every decision here, lives in [ARCHITECTURE.md](ARCHITECTURE.md).
-> This file is the overview. For a full walkthrough of the Python API see [USAGE.md](USAGE.md);
-> when something fails see [docs/troubleshooting.md](docs/troubleshooting.md); for working code
-> see [samples/](samples).
+async def main():
+    graph = await GraphClient.device_code(TENANT, CLIENT, Scopes.MAIL_SEND)
+
+    async with graph:
+        await graph.mail.send(
+            to="alice@contoso.com",
+            subject="Quarterly report",
+            body="<p>Attached.</p>", html=True,
+            attachments=["report.pdf"],
+        )
+
+asyncio.run(main())
+```
+
+> **Start here:** [USAGE.md](USAGE.md) is the full walkthrough. When something fails, see
+> [docs/troubleshooting.md](docs/troubleshooting.md). For working code, see [samples/](samples).
+> [ARCHITECTURE.md](ARCHITECTURE.md) explains *why* the rules are what they are.
 
 ---
 
-## Why
+## Install
 
-Microsoft already ships `msgraph-sdk` and `azure-identity` for Python. If the only goal were "call
-Graph from Python", `pip install msgraph-sdk` would be the whole architecture.
+```bash
+pip install msgraph-simple
+```
 
-The reason to route through C# is that **the behaviour has one implementation**. Auth handling, retry
-semantics, error shape, pagination and batch chunking are written once, tested once in xUnit, and
-exposed identically to every consumer. A .NET service and a Python script cannot drift apart, because
-they are the same compiled code.
+Two dependencies, both Microsoft's own — `azure-identity` for credentials, `msgraph-core` for the
+supported middleware pipeline. Pure Python, so it installs anywhere.
 
-The price is a foreign-function boundary, NativeAOT constraints, and per-platform builds. If that
-stops being worth it, the correct move is to delete this package and use `msgraph-sdk` directly.
+`msgraph-sdk` is deliberately not used: its dependency tree does not resolve in practice, hanging
+`pip` and `uv` indefinitely. `msgraph-core` resolves in a few seconds and carries the parts that
+matter.
 
 ---
 
-## Quick start
+## What you get
 
-### Python
-
-```python
-from msgraph_simple import GraphClient, GraphError
-
-# Application-level access — app permissions, no user
-with GraphClient.app_only(tenant_id=..., client_id=..., client_secret=...) as g:
-    for user in g.paged("/users", select="id,displayName,mail"):
-        print(user["mail"])
-
-# Delegated access — a real user signs in, their permissions apply
-with GraphClient.device_code(tenant_id=..., client_id=..., scopes=["User.Read"]) as g:
-    print(g.get("/me")["displayName"])
-```
-
-Once a `GraphClient` exists, **nothing about the request surface depends on how it was
-authenticated.** Scripts switch between access models by changing one constructor call.
+**A resource layer.** Graph's `sendMail` payload is roughly twenty lines of nested JSON —
+recipients as objects inside objects, a body with a content type, attachments base64-encoded with
+an `@odata.type` discriminator. A Teams meeting needs `isOnlineMeeting` *and*
+`onlineMeetingProvider`, and times as `dateTime`/`timeZone` pairs. All of that is built for you.
 
 ```python
-g.get("/users/alice@contoso.com")
-g.get("/users", select="id,mail", filter="accountEnabled eq true", top=999)
-g.post("/users", body={...});  g.patch("/users/{id}", body={...});  g.delete("/users/{id}")
-g.request("GET", "/users", version="beta", headers={"ConsistencyLevel": "eventual"})
+await graph.mail.send(to=..., subject=..., body=..., attachments=[...])
+await graph.mail.reply(message_id, comment="Thanks")
+async for message in graph.mail.inbox(unread_only=True): ...
 
-for user in g.paged("/users", select="id,mail"):
-    ...
+event = await graph.calendar.schedule(subject=..., start=..., end=...,
+                                      attendees=[...], online=True)
+print(event["onlineMeeting"]["joinUrl"])
 
-g.download("/me/drive/items/{id}/content", "local.bin")
-g.upload("/me/drive/root:/big.zip:/content", "big.zip")
-results = g.batch([("GET", "/users"), ("GET", "/groups")])
-
-try:
-    g.get("/users/nope")
-except GraphError as e:
-    print(e.status, e.code, e.request_id)
+slots = await graph.calendar.find_times(["a@x.com", "b@x.com"], duration_minutes=30)
 ```
 
-### C#
+**Everything generic, too.** `get`, `post`, `patch`, `delete`, `paged`, `batch`, `download`,
+`upload` — every `v1.0` and `beta` endpoint reachable without waiting for a typed wrapper.
 
-**There is no .NET package.** Every type in the core is `internal`, and it is consumed across the C ABI
-rather than referenced as an assembly — see [ARCHITECTURE.md §2](ARCHITECTURE.md#2-why-a-c-core) for why
-that was chosen deliberately rather than left as an oversight. A .NET application wanting Graph should
-take `Microsoft.Graph` directly.
+**Speed that does not need orchestrating.** Batching is the lever, not asyncio:
 
-The nine exported entry points are documented in
-[ARCHITECTURE.md §6](ARCHITECTURE.md#6-the-abi-contract).
+| | 500 user lookups |
+|---|---|
+| One at a time | 500 round-trips |
+| `graph.batch(...)` | **25 round-trips** |
+| …dispatched concurrently | **~5 round-trip times** |
+
+`batch`, `get_many` and `send_many` chunk at Graph's limit of 20 and dispatch under a bounded
+semaphore. You never write `asyncio.gather`, and you do not get throttled for going too wide.
+
+**Adding a resource is one subclass.** `list`, `get`, `create`, `update`, `delete` and `get_many`
+come from a shared base; a new resource sets a path and adds whatever is specific to it.
 
 ---
 
 ## The two access models
 
-Choosing the wrong one is how an automation script ends up with far more reach than intended.
+Choosing wrong is how a script ends up with far more reach than intended.
 
 | | **Application-level** | **Delegated** |
 |---|---|---|
-| Acting as | The application itself | A signed-in user |
-| Entra permission type | Application permissions | Delegated permissions |
-| Consent | Admin, once, tenant-wide | User (or admin) |
-| Effective rights | The granted app permissions, **across the whole tenant** | Intersection of the scopes and what that user can already do |
-| `/me` works | No | Yes |
-| Scope requested | `https://graph.microsoft.com/.default` | Explicit: `User.Read`, `Mail.Send`, … |
+| Acting as | The application itself | A signed-in person |
+| Reach | **The whole tenant** | Only what that person can already do |
+| `graph.mail` / `graph.calendar` | No — there is no user | Yes |
 | Human needed | No | Yes, at first sign-in |
-| Client type | Confidential (holds a secret) | Public (holds no secret) |
+| Constructor | `app_only`, `from_env` | `device_code`, `interactive` |
 
 `Mail.Read` as an **application** permission reads every mailbox in the tenant. The same name as a
-**delegated** permission reads only the signed-in user's mail.
+**delegated** permission reads only the signed-in person's mail.
 
-These are normally **two separate app registrations**. Setup for each is in
-[ARCHITECTURE.md §7.2](ARCHITECTURE.md#72-entra-app-registration).
-
-### Supported flows
-
-| Flow | Access model | Status |
-|---|---|---|
-| Client secret | Application | Supported |
-| Device code | Delegated | Supported |
-| Authorization code + PKCE | Delegated | Supported |
-| Client certificate | Application | Extension point ready |
-| Managed identity | Application | Extension point ready |
-| On-behalf-of | Delegated | Extension point ready |
-| Interactive browser / WAM | Delegated | Excluded — not NativeAOT-compatible |
-| ROPC (username/password) | Delegated | Excluded — breaks under MFA, stores passwords |
-
-Adding one of the "extension point ready" rows is a new `AuthenticationStrategy` subclass and one
-case in one factory. Nothing else in the codebase moves.
-
----
-
-## What the core handles for you
-
-- **Tokens.** Acquisition, caching, expiry and refresh are entirely Azure.Identity's job. This
-  package writes no token-handling code — no manual `/oauth2/v2.0/token` calls, no expiry
-  arithmetic, no refresh timer.
-- **Retry and throttling.** Microsoft's supported handler pipeline. `429`, `503` and `504` are
-  retried and `Retry-After` is honoured. No retry logic is written here. When the budget is
-  exhausted, the failure still reports `retryAfterSeconds` so you can back off yourself.
-- **Not being throttled.** See below — it is mostly Microsoft's pipeline, not you.
-- **Pagination.** `@odata.nextLink` is lifted to the top of the response; Python owns the loop, so
-  there is no cursor state in the native library to leak.
-- **Batching.** Chunked at Graph's limit of 20, and re-ordered by `id` so results align with what you
-  sent. One failing sub-request does not discard its siblings.
-- **Files.** Downloads stream to disk and never enter memory or a JSON envelope. Uploads switch to a
-  chunked upload session above 4 MiB.
-- **Errors.** One shape for every failure — transport, auth, Graph or a bug in the core.
-
-### Staying on the right side of Graph's limits
-
-Microsoft throttles per application and per tenant rather than banning an IP, and the way to stay
-in good standing is simple: when Graph says `429` with a `Retry-After`, wait exactly that long.
-The handler pipeline does that for you, and no request in this package ever ignores it.
-
-What is and is not protecting you:
-
-| | |
-|---|---|
-| `Retry-After` is honoured | Always, on every retryable response. This is the mechanism that matters. |
-| Attempts are capped | Kiota's default is 3 retries per request. Raising it makes a throttled request *wait* longer, not send more. |
-| Exhaustion is visible | When the budget runs out, the error still carries `retryAfterSeconds` so you can back off yourself. |
-| Batching reduces volume | 20 requests go as one call. Chunks are issued sequentially, never in parallel. |
-| **No client-side rate limit** | Nothing caps requests per second. A tight `paged()` loop over a large collection goes as fast as Graph answers — which is fine, because Graph throttles you rather than banning you, and the pipeline then backs off correctly. |
-
-Tuning, if you want a request to give up sooner rather than sit in a retry loop:
-
-```python
-g = GraphClient.app_only(..., max_retries=2, max_delay_seconds=30)
-```
-
-`max_retries` is attempts after the first. `max_delay_seconds` is a ceiling on the **total** time
-spent retrying one request, not a per-attempt cap — the per-attempt interval stays whatever Graph
-asked for, because second-guessing that is how you get throttled harder.
+Supported sign-ins: client secret, device code, and authorization code with PKCE. Certificate,
+managed identity and on-behalf-of are a credential swap away — `azure-identity` ships them all and
+nothing here constrains which you pass.
 
 ---
 
 ## Security properties
 
-These are deliberate, and they are tested rather than documented and hoped for.
+Deliberate, and tested rather than documented and hoped for.
 
-- **No export returns an access token or a refresh token.** There is no raw-token escape hatch.
-- **Response headers pass an allowlist, never a denylist.** A denylist fails open on whatever header
-  Microsoft adds tomorrow. `Authorization` and `WWW-Authenticate` cannot escape even by accident.
-- **A caller-supplied `Authorization` header is rejected.** The core owns authentication; accepting
-  one would silently bypass the credential the handle was created with.
-- **Delegated scopes are never defaulted.** `.default` in a delegated flow silently requests every
-  scope ever consented for that client — the opposite of least privilege. Omitting `scopes` is an
-  error naming the missing field.
-- **The PKCE verifier never crosses the ABI.** It stays inside the core for the life of the
-  exchange, so Python cannot leak it by logging a return value. `state` is validated in the core,
-  not in Python, so the CSRF check cannot be skipped by a caller reimplementing the loop.
-- **Absolute URLs are allowed but unauthenticated off-host.** Pre-authenticated download URLs work;
-  the bearer token is withheld from any host but `graph.microsoft.com`.
-- **Nothing is written to disk.** The token cache is in-memory for the life of the handle, so there
-  is no credential material at rest and no keyring dependency.
-
-> **Known ceiling.** `ClientSecretCredential` takes a `string`, and a managed string cannot be
-> reliably zeroed. A process memory dump can therefore contain the secret. Certificate auth or
-> managed identity removes the shared secret entirely. Delegated flows are better off by
-> construction: a public client holds no secret at all.
+- **Delegated scopes are never defaulted.** `.default` on a delegated flow silently requests every
+  scope ever consented for that client. Omitting scopes is an error naming the field.
+- **A caller-supplied `Authorization` header is rejected** before the request leaves.
+- **Response headers pass an allowlist, never a denylist.** A denylist fails open on whatever
+  header Microsoft adds tomorrow.
+- **The PKCE verifier never leaves the process**, and `state` is validated internally so the CSRF
+  check cannot be skipped.
+- **The bearer token is withheld from any host but `graph.microsoft.com`.** Pre-authenticated
+  download URLs still work; they simply travel unauthenticated.
+- **Nothing is written to disk.** The token cache is in memory for the life of the client.
 
 ---
 
 ## Errors
 
-Every failure produces the same envelope, and `GraphError` carries it into Python:
+One exception type carrying data, rather than a hierarchy.
 
 ```python
 except GraphError as e:
-    e.status        # HTTP status, or 0 for non-HTTP failures
-    e.code          # Graph error code, or a core code (below)
+    e.status        # HTTP status, or 0 when there was no response at all
+    e.code          # "itemNotFound", or a core code such as "consentRequired"
     e.message
     e.request_id    # quote this to Microsoft support
     e.retry_after
-    e.inner         # Graph's innerError, preserved verbatim
+    e.inner         # Graph's own inner error, verbatim
 ```
 
-Failures with no HTTP response use `status: 0` and a core-defined code:
-
-| Code | Cause |
-|---|---|
-| `authenticationFailed` | Bad secret, wrong tenant, expired credential |
-| `consentRequired` | A requested delegated scope has not been consented to |
-| `interactionRequired` | A two-phase flow was used through the single-shot path |
-| `signInTimeout` | The user did not complete sign-in within the window |
-| `signInDeclined` | The user cancelled, or Entra denied the sign-in |
-| `stateMismatch` | The auth-code redirect `state` did not match — a possible CSRF attempt |
-| `transportError` | DNS, TLS, connection reset |
-| `timeout` | `timeoutMs` elapsed |
-| `invalidRequest` | Malformed envelope, or a delegated credential missing `scopes` |
-| `invalidHandle` | Handle unknown or already closed |
-| `unsupportedCredentialType` | Unknown `type` in the credentials envelope |
-| `requestFailed` | A retry budget was exhausted with no readable Graph error |
-| `internalError` | A bug in the core |
+Throttling is handled for you — the pipeline honours `Retry-After`. Catching
+`activityLimitReached` means the retry budget ran out, and `retry_after` tells you how long to
+wait. Every code and its fix is in [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ---
 
 ## Logging
 
-Off unless asked. Set `MSGRAPH_LOG_LEVEL` to `error` or `info`; anything else, including a typo,
-means off. Output is one JSON object per line on **stderr**, because a caller may be piping stdout.
+Off unless asked. `MSGRAPH_LOG_LEVEL=info` or `=error`; one JSON object per line on stderr.
 
-```console
-$ MSGRAPH_LOG_LEVEL=info python my_script.py
-{"level":"info","event":"sessionCreated","handle":1}
+```
 {"level":"info","event":"request","method":"GET","url":"https://graph.microsoft.com/v1.0/users","status":200,"ms":214,"requestId":"a1b2c3d4","errorCode":null}
-{"level":"error","event":"request","method":"GET","url":"https://graph.microsoft.com/v1.0/users/nope","status":404,"ms":88,"requestId":"e5f6a7b8","errorCode":"itemNotFound"}
 ```
 
-| Level | Emits |
-|---|---|
-| `off` (default) | Nothing |
-| `error` | Failed requests and failures at the ABI boundary |
-| `info` | The above, plus successful requests and session lifecycle |
-
-**URLs are logged without their query string**, because an OData `$filter` routinely carries user
-identifiers and a `nextLink` carries a skiptoken. Headers, request bodies and credential material are
-never logged — the logger takes only the exact fields it may emit, so there is no overload through
-which anything else could reach a line.
-
-Correlate with `requestId`; it is the value Microsoft support asks for.
+URLs are logged **without their query string**, because an OData `$filter` routinely carries email
+addresses. Headers, bodies and credential material are never logged.
 
 ---
 
 ## Development
 
-The development machine is Windows. The shipped artefact is a `linux-x64` shared library.
-
 ```bash
-dotnet build                        # host build, fast feedback
-dotnet test                         # unit + integration tests, Windows or Linux
-dotnet format                       # style
-docker build -f build/Dockerfile -t msgraph-core-build .        # linux-x64 .so
-docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest"        msgraph-core-build cp /out/MicrosoftGraph.so /dest/   # bundle it into the package
-
-python -m unittest discover -s python/tests    # Python layer; ABI tests need the .so above
-python -m build python/                        # wheel, run inside Linux
+pip install -e python/
+cd python && python -m unittest discover -s tests     # 103 tests
+python -m build --wheel python/
 ```
 
-### The cross-compilation consequence
-
-**NativeAOT cannot cross-compile from Windows to Linux.** It invokes the platform linker, so a
-`linux-x64` binary must be produced on Linux. Two consequences:
-
-1. **The build runs in Docker.** `build/Dockerfile` is the definition of a build; there is no
-   "works on my machine" path.
-2. **The Python loop lives in Docker or WSL.** Editing happens on Windows; running the Python
-   package happens on Linux.
-
-C# tests are exempt — they are plain managed code and run natively on Windows. That keeps the fast
-inner loop (write C#, run xUnit) on the host and pushes only the slower outer loop into a container.
-
-### Prerequisites
-
-| For | You need |
-|---|---|
-| `dotnet build` / `test` / `pack` | .NET 10 SDK |
-| `docker build` | Docker, or a Linux box with the .NET 10 SDK plus `clang` and `zlib1g-dev` |
-| Running the Python package | Linux, Python 3.9+ |
-| Live tests | An Entra tenant and the app registrations in ARCHITECTURE.md §7.2 |
-
----
-
-## Testing
-
-```bash
-dotnet test
-```
-
-Four layers, per [ARCHITECTURE.md §13](ARCHITECTURE.md#13-testing-strategy):
-
-| Layer | What it covers | Needs |
-|---|---|---|
-| **Unit** | URL building, header allowlisting, error mapping, pagination, batching, auth strategies, PKCE, serialisation, logging | Nothing — stubbed transport |
-| **Integration** | The real Microsoft handler pipeline: retry, `Retry-After`, claims challenges, token withholding | Nothing — controlled transport, fake credential |
-| **ABI** | The built `.so` driven from Python: no-crash cases, memory stability, handle lifecycle | A Linux build |
-| **Live** | Real Graph, real tenants | Environment variables; skipped otherwise |
-
-`dotnet test` on a clean checkout never requires a tenant.
-
-Tests run with reflection-based JSON serialisation **disabled**, matching the shipped binary, so a
-serialisation path that only works under the JIT fails in CI rather than in production.
-
----
-
-## Project layout
-
-```text
-src/MicrosoftGraph/
-├── Authentication/   credential acquisition, one class per Entra flow
-├── Diagnostics/      the opt-in structured logger
-├── Graph/            session, executor, URL building, operations, upload strategies
-├── Interop/          the nine native entry points and the handle registries
-└── Models/           the envelopes that cross the ABI, and the error shape
-
-tests/UnitTests/          stubbed transport, no network
-tests/IntegrationTests/   the full handler pipeline, controlled responses
-
-python/msgraph_simple/    the ctypes binding — stdlib only, no dependencies
-build/Dockerfile          the linux-x64 NativeAOT build
-samples/                  runnable scripts, one per access model
-USAGE.md                  the Python API, end to end
-docs/troubleshooting.md   every error code, what causes it, what to do
-```
-
----
-
-## Dependencies
-
-| Package | Why |
-|---|---|
-| `Azure.Identity` | Token acquisition, refresh and in-memory caching |
-| `Microsoft.Graph.Core` | The supported handler pipeline, without the Kiota-generated types |
-| `Microsoft.Identity.Client` | The PKCE auth-code exchange for a public client (already a transitive dependency of Azure.Identity, so the graph is unchanged) |
-
-The Python layer has **none** — `ctypes`, `json`, `secrets`, `webbrowser` and `http.server`, all
-stdlib. A package whose selling point is "plug and play" should not begin with a dependency
-resolution.
-
----
-
-## Deliberate omissions
-
-Each is a decision with a trigger, not an oversight. The full table is in
-[ARCHITECTURE.md §14](ARCHITECTURE.md#14-deliberate-omissions). The ones most likely to matter:
-
-- **No persistent token cache.** A new process means a new delegated sign-in. Add one when repeated
-  CLI invocations make re-prompting tiresome enough to accept a refresh token on disk.
-- **No `graph_cancel` for in-flight requests.** `timeoutMs` covers the common case, and pending
-  sign-ins are already cancellable.
-- **No typed Graph models.** Generic JSON reaches every `v1.0` and `beta` endpoint on day one.
-- **`linux-x64` only.** Adding `win-x64` is a RID change and a second build leg, not a redesign.
+No container, no compiler, no platform-specific build.
 
 ---
 
 ## Status
 
-All seven milestones of [ARCHITECTURE.md §15](ARCHITECTURE.md#15-build-order) are implemented **and
-verified on Linux**. The core compiles, the library loads, the wheel installs and the boundary holds.
-
-| | |
-|---|---|
-| Managed tests | **171**, green on Windows and Linux alike |
-| Python tests | **61**, green against the real compiled core; 1 skip, the live-tenant suite |
-| Native compilation | ~20 seconds, **no trim or AOT warnings** |
-| The library | 11.5 MB stripped, exporting exactly the nine documented entry points |
-| The wheel | `msgraph_simple-0.1.0-py3-none-manylinux_2_34_x86_64.whl`, installs clean and imports |
-
-Built on Ubuntu 26.04 under WSL with .NET 10.0.401 and clang 21, and independently through
-`build/Dockerfile`, which runs the managed suite inside the image before producing anything.
+The package is complete and tested. **103 tests**, covering the middleware contract, request
+construction, paging, batching, file round-trips, the exact mail and calendar payloads, the error
+taxonomy, concurrency bounds and the logger.
 
 ### What still needs a tenant
 
-Everything above was verified without one. These were not, and cannot be:
+Everything above is verified without one. These cannot be:
 
-- **Whether Entra accepts a secretless PKCE exchange** for a given app registration. MSAL builds the
-  request; only the service can accept it. This is the largest remaining unknown.
-- A real device code sign-in end to end, and the silent refresh that follows it.
-- That the permissions in ARCHITECTURE.md §7.2 are sufficient in practice for each sample.
+- Whether each sign-in flow completes against real Entra.
+- Whether the permissions each resource declares are sufficient in practice.
 
-Set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` and the live suite stops skipping.
+Set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` and the live checks become
+available.
+
+### The C# tree
+
+`src/`, `tests/` and `build/` hold the previous implementation: a C# core compiled to a native
+library and reached through a C ABI. Nothing consumes it any more. It is kept on this branch
+pending a decision to remove it, and its own tests still pass in isolation.
+[ARCHITECTURE.md](ARCHITECTURE.md) describes that design and remains worth reading for the
+reasoning behind rules the Python code inherited.
+
+---
 
 ## Licence
 
-[MIT](LICENSE). The Microsoft packages this wraps — Azure.Identity, Microsoft.Graph.Core and
-Microsoft.Identity.Client — are MIT too, so nothing here carries an obligation you did not choose.
-FluentAssertions 7.2.0 is Apache-2.0 but is a test-only dependency and is not distributed.
+[MIT](LICENSE). `azure-identity` and `msgraph-core` are MIT too, so nothing here carries an
+obligation you did not choose.

@@ -1,1 +1,0 @@
-The built native library is copied here by build/Dockerfile and bundled into the wheel.

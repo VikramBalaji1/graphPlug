@@ -1,106 +1,102 @@
-"""Plug-and-play Microsoft Graph from Python.
+"""Plug-and-play Microsoft Graph for Python.
 
-Import one class, hand it your credentials, and call Graph::
+Import one class, hand it credentials, call Graph::
 
-    from msgraph_simple import GraphClient
+    import asyncio
+    from msgraph_simple import GraphClient, Scopes
 
-    with GraphClient.app_only(tenant_id=..., client_id=..., client_secret=...) as g:
-        for user in g.paged("/users", select="id,displayName,mail"):
-            print(user["mail"])
+    async def main():
+        async with GraphClient.from_env() as graph:
+            await graph.mail.send(to="alice@contoso.com", subject="Hi", body="Hello")
 
-Everything behind that — credential construction, token acquisition and refresh, the retry and
-throttling pipeline, pagination, batching, chunked uploads, error normalisation — lives in the C#
-core. This layer contains no Graph knowledge: no endpoint lists, no retry logic, no error
-interpretation beyond raising what the core reports.
+            async for user in graph.paged("/users", select="id,mail"):
+                print(user["mail"])
+
+    asyncio.run(main())
+
+Token acquisition and refresh are azure-identity's job; retry, throttling and redirects are
+Microsoft's middleware. What this package adds is a surface you can use without reading the Graph
+reference first, and a few guarantees the boundary enforces rather than asking you to remember.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 from types import TracebackType
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Type, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Type
 
-from . import _auth
-from ._native import GraphError, call, dumps
+from . import _auth, _log, _operations
+from ._errors import GraphError
+from ._http import DEFAULT_MAX_CONCURRENCY, Transport
+from ._request import DEFAULT_VERSION, build_url, odata, reject_authorization
+from ._resources import Calendar, Mail
+from ._scopes import Scopes
 
-__all__ = ["GraphClient", "GraphError", "PendingSignIn"]
+__all__ = ["GraphClient", "GraphError", "PendingSignIn", "Scopes"]
 
-__version__ = "0.1.0"
-
-#: OData parameters, spelled as Python keywords. The core URL-encodes them.
-_ODATA_KEYWORDS = ("select", "filter", "top", "skip", "expand", "orderby", "search", "count")
-
-#: How long ``interactive()`` waits for the browser round-trip, matching the core's sign-in window.
-_SIGN_IN_TIMEOUT_SECONDS = 15 * 60
-
-BatchRequest = Union[Tuple[str, str], Dict[str, Any]]
-
-
-def _odata(options: Dict[str, Any]) -> Dict[str, Any]:
-    """Turn ``select=...`` into ``$select``, leaving anything else as a literal parameter."""
-    query: Dict[str, Any] = {}
-    for name, value in options.items():
-        if value is None:
-            continue
-        query[f"${name}" if name in _ODATA_KEYWORDS else name] = value
-    return query
+__version__ = "0.2.0"
 
 
 class PendingSignIn:
-    """A sign-in waiting on a human (7.5).
+    """A sign-in waiting on a human.
 
-    ``begin`` has returned what the user must see or do; ``complete`` waits for them.
+    ``begin`` has returned what the person must see or do; ``complete`` waits for them.
     """
 
-    def __init__(self, envelope: Dict[str, Any]) -> None:
-        self._envelope = envelope
+    def __init__(self, flow: Any, begun: Dict[str, Any], build: Any) -> None:
+        self._flow = flow
+        self._build = build
         self._settled = False
 
-        self.flow_id: int = int(envelope["flowId"])
-        #: Device code: the code the user types.
-        self.user_code: Optional[str] = envelope.get("userCode")
+        #: Device code: the code the person types.
+        self.user_code: Optional[str] = begun.get("userCode")
         #: Device code: where they type it.
-        self.verification_uri: Optional[str] = envelope.get("verificationUri")
+        self.verification_uri: Optional[str] = begun.get("verificationUri")
         #: Device code: Microsoft's own instruction text, suitable for printing verbatim.
-        self.message: Optional[str] = envelope.get("message")
+        self.message: Optional[str] = begun.get("message")
         #: Authorization code: the URL to open in a browser.
-        self.authorize_url: Optional[str] = envelope.get("authorizeUrl")
+        self.authorize_url: Optional[str] = begun.get("authorizeUrl")
         #: Authorization code: the anti-forgery value the redirect must echo back.
-        self.state: Optional[str] = envelope.get("state")
-        self.expires_in: int = int(envelope.get("expiresInSeconds", 0))
+        self.state: Optional[str] = begun.get("state")
+        self.expires_in: int = int(begun.get("expiresInSeconds", 0))
 
-    def complete(self, **completion: Any) -> "GraphClient":
-        """Block until the user finishes, then return a ready client."""
-        payload = dumps(completion) if completion else None
-        envelope = call("graph_auth_complete", self.flow_id, payload)
+    async def complete(self, **completion: Any) -> "GraphClient":
+        """Block until the person finishes, then return a ready client."""
+        client = await self._build(self._flow, completion)
         self._settled = True
-        return GraphClient(int(envelope["handle"]))
+        return client
 
-    def cancel(self) -> None:
+    async def cancel(self) -> None:
         """Abandon the sign-in and release whatever it was holding."""
-        if self._settled:
-            return
-        self._settled = True
-        call("graph_auth_cancel", self.flow_id)
+        if not self._settled:
+            self._settled = True
+            cancel = getattr(self._flow, "cancel", None)
+            if cancel is not None:
+                await cancel()
 
     def __repr__(self) -> str:
         what = self.user_code or self.authorize_url or "pending"
-        return f"<PendingSignIn flow_id={self.flow_id} {what!r}>"
+        return f"<PendingSignIn {what!r}>"
 
 
 class GraphClient:
     """One authenticated session.
 
-    Once a client exists, nothing about the request surface depends on how it was authenticated;
-    scripts switch between access models by changing one constructor call.
+    Once a client exists, nothing about the request surface depends on how it was authenticated, so
+    a script switches between access models by changing one constructor call.
 
-    Safe to share across threads. Creating one per thread is supported but wasteful, and for
-    delegated access it is worse than wasteful, because each would prompt its own sign-in.
+    Not safe to share across event loops. Within one loop it is safe to use concurrently, and
+    concurrency is bounded internally so Graph is not overwhelmed.
     """
 
-    def __init__(self, handle: int) -> None:
-        self._handle = handle
-        self._closed = False
+    def __init__(self, transport: Transport) -> None:
+        self._transport = transport
+
+        #: Messages in the signed-in user's mailbox.
+        self.mail = Mail(self)
+        #: Events on the signed-in user's calendar.
+        self.calendar = Calendar(self)
 
     # ── application-level access ─────────────────────────────────────────────
 
@@ -112,305 +108,212 @@ class GraphClient:
         client_secret: str,
         scopes: Optional[Sequence[str]] = None,
         authority_host: Optional[str] = None,
-        max_retries: Optional[int] = None,
-        max_delay_seconds: Optional[int] = None,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+        _client: Any = None,
     ) -> "GraphClient":
         """Act as the application itself, with admin-consented application permissions.
 
         These are tenant-wide: ``Mail.Read`` as an application permission reads every mailbox.
-        """
-        credentials: Dict[str, Any] = {
-            "type": "clientSecret",
-            "tenantId": tenant_id,
-            "clientId": client_id,
-            "clientSecret": client_secret,
-        }
-        _add_optional(credentials, scopes, authority_host, max_retries, max_delay_seconds)
 
-        return cls(int(call("graph_client_create", dumps(credentials))["handle"]))
+        Building a client contacts nothing. The credential is constructed locally and the first
+        token is fetched on the first request, so a bad secret surfaces then rather than here.
+        """
+        credential = _auth.app_only_credential(
+            tenant_id, client_id, client_secret, authority_host
+        )
+        return cls(Transport(
+            credential,
+            scopes or (_auth.DEFAULT_SCOPE,),
+            max_concurrency=max_concurrency,
+            client=_client,
+        ))
 
     @classmethod
     def from_env(cls, **overrides: Any) -> "GraphClient":
-        """Application-level access from ``AZURE_TENANT_ID`` / ``_CLIENT_ID`` / ``_CLIENT_SECRET``.
-
-        The secret is read here, passed once across the boundary, and lives thereafter only inside
-        the credential the core holds.
-        """
-        missing = [
-            name
-            for name in ("AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET")
-            if not os.environ.get(name)
-        ]
+        """Application-level access from ``AZURE_TENANT_ID`` / ``_CLIENT_ID`` / ``_CLIENT_SECRET``."""
+        names = ("AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET")
+        missing = [name for name in names if not os.environ.get(name)]
         if missing:
-            raise GraphError(0, "invalidRequest", f"missing environment variables: {', '.join(missing)}")
+            raise GraphError(
+                0, "invalidRequest", f"missing environment variables: {', '.join(missing)}"
+            )
 
-        return cls.app_only(
-            tenant_id=os.environ["AZURE_TENANT_ID"],
-            client_id=os.environ["AZURE_CLIENT_ID"],
-            client_secret=os.environ["AZURE_CLIENT_SECRET"],
-            **overrides,
-        )
+        tenant, client, secret = (os.environ[name] for name in names)
+        return cls.app_only(tenant, client, secret, **overrides)
 
     # ── delegated access ─────────────────────────────────────────────────────
 
     @classmethod
-    def begin_device_code(
+    async def begin_device_code(
         cls,
         tenant_id: str,
         client_id: str,
         scopes: Sequence[str],
         authority_host: Optional[str] = None,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+        _client: Any = None,
     ) -> PendingSignIn:
-        """Start a device code sign-in and return at once, for custom prompting."""
-        credentials: Dict[str, Any] = {
-            "type": "deviceCode",
-            "tenantId": tenant_id,
-            "clientId": client_id,
-            "scopes": list(scopes),
-        }
-        _add_optional(credentials, None, authority_host, None, None)
+        """Start a device code sign-in and return at once, so you can render your own prompt."""
+        flow, begun = await _auth.device_code_begin(
+            tenant_id, client_id, scopes, authority_host
+        )
 
-        return PendingSignIn(call("graph_auth_begin", dumps(credentials)))
+        async def build(pending: Any, _completion: Dict[str, Any]) -> "GraphClient":
+            credential = await pending.complete()
+            return cls(Transport(
+                credential, pending.scopes, max_concurrency=max_concurrency, client=_client
+            ))
+
+        return PendingSignIn(flow, begun, build)
 
     @classmethod
-    def device_code(
+    async def device_code(
         cls,
         tenant_id: str,
         client_id: str,
         scopes: Sequence[str],
         authority_host: Optional[str] = None,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     ) -> "GraphClient":
-        """Sign a user in by device code, printing the code and blocking until they finish."""
-        flow = cls.begin_device_code(tenant_id, client_id, scopes, authority_host)
-        print(flow.message or f"Visit {flow.verification_uri} and enter {flow.user_code}")
+        """Sign a person in by device code, printing the code and waiting for them."""
+        pending = await cls.begin_device_code(
+            tenant_id, client_id, scopes, authority_host, max_concurrency
+        )
+        print(pending.message or f"Visit {pending.verification_uri} and enter {pending.user_code}")
 
         try:
-            return flow.complete()
+            return await pending.complete()
         except BaseException:
-            flow.cancel()
+            await pending.cancel()
             raise
 
     @classmethod
-    def _begin_interactive(
+    async def interactive(
         cls,
         tenant_id: str,
         client_id: str,
         scopes: Sequence[str],
         redirect_uri: str = "http://localhost:8400",
         authority_host: Optional[str] = None,
-    ) -> PendingSignIn:
-        """Start an authorization-code sign-in and return the URL to open."""
-        credentials: Dict[str, Any] = {
-            "type": "authorizationCode",
-            "tenantId": tenant_id,
-            "clientId": client_id,
-            "scopes": list(scopes),
-            "redirectUri": redirect_uri,
-        }
-        _add_optional(credentials, None, authority_host, None, None)
-
-        return PendingSignIn(call("graph_auth_begin", dumps(credentials)))
-
-    @classmethod
-    def interactive(
-        cls,
-        tenant_id: str,
-        client_id: str,
-        scopes: Sequence[str],
-        redirect_uri: str = "http://localhost:8400",
-        authority_host: Optional[str] = None,
-        timeout_seconds: float = _SIGN_IN_TIMEOUT_SECONDS,
+        timeout_seconds: float = _auth.SIGN_IN_WINDOW_SECONDS,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     ) -> "GraphClient":
-        """Open a browser, catch the redirect, and return a ready client.
+        """Open a browser, catch the redirect on loopback, and return a ready client.
 
-        The listener binds to loopback and accepts exactly one request. ``state`` travels back to
-        the core for validation rather than being checked here.
+        The redirect URI must match the app registration character for character; a registered
+        ``http://localhost:8400`` and a supplied ``http://localhost:8400/`` are different values to
+        Entra and produce AADSTS50011.
         """
-        flow = cls._begin_interactive(tenant_id, client_id, scopes, redirect_uri, authority_host)
+        scopes = _auth.require_delegated_scopes(scopes)
+        verifier, challenge = _auth.pkce_pair()
+        state = _auth.new_state()
 
-        try:
-            if not _auth.open_browser(flow.authorize_url or ""):
-                print(f"Open this URL to sign in:\n{flow.authorize_url}")
+        url = _auth.authorization_url(
+            tenant_id, client_id, scopes, redirect_uri, challenge, state, authority_host
+        )
+        if not _auth.open_browser(url):
+            print(f"Open this URL to sign in:\n{url}")
 
-            redirect = _auth.wait_for_redirect(redirect_uri, timeout_seconds)
+        redirect = await _auth.wait_for_redirect(redirect_uri, timeout_seconds)
 
-            if "error" in redirect:
-                raise GraphError(
-                    0,
-                    "signInDeclined",
-                    redirect.get("error_description", redirect["error"]),
-                )
+        if "error" in redirect:
+            raise GraphError(
+                0, "signInDeclined", redirect.get("error_description", redirect["error"])
+            )
+        # Validated here rather than by the caller, so the check cannot be skipped.
+        if redirect.get("state") != state:
+            raise GraphError(0, "stateMismatch", "the redirect state did not match the one issued")
 
-            return flow.complete(code=redirect.get("code"), state=redirect.get("state"))
-        except BaseException:
-            flow.cancel()
-            raise
+        credential = await _auth.exchange_code(
+            tenant_id, client_id, scopes, redirect_uri, redirect.get("code", ""),
+            verifier, authority_host,
+        )
+        return cls(Transport(credential, scopes, max_concurrency=max_concurrency))
 
     # ── requests ─────────────────────────────────────────────────────────────
 
-    def request(
+    async def request(
         self,
         method: str,
         path: str,
         version: Optional[str] = None,
         body: Any = None,
         headers: Optional[Dict[str, str]] = None,
-        timeout_ms: Optional[int] = None,
         **options: Any,
     ) -> Dict[str, Any]:
         """Issue one request and return the whole envelope, including ``nextLink``.
 
-        ``path`` may be a relative Graph path or an absolute URL; when absolute, ``version`` and
-        the OData options are ignored because the URL already carries them.
+        ``path`` may be a relative Graph path or a full URL; when it is a URL, ``version`` and the
+        OData options are ignored because the URL already carries them.
         """
-        return call("graph_request", self._require_open(), dumps(self._envelope(
-            method, path, version, body, headers, timeout_ms, options)))
+        url = build_url(path, version, odata(options))
+        return await self._transport.json(
+            method, url, headers=reject_authorization(headers), body=body
+        )
 
-    def get(self, path: str, **options: Any) -> Any:
+    async def get(self, path: str, **options: Any) -> Any:
         """``GET`` and return the response body."""
-        return self.request("GET", path, **options).get("body")
+        return (await self.request("GET", path, **options)).get("body")
 
-    def post(self, path: str, body: Any = None, **options: Any) -> Any:
-        return self.request("POST", path, body=body, **options).get("body")
+    async def post(self, path: str, body: Any = None, **options: Any) -> Any:
+        return (await self.request("POST", path, body=body, **options)).get("body")
 
-    def patch(self, path: str, body: Any = None, **options: Any) -> Any:
-        return self.request("PATCH", path, body=body, **options).get("body")
+    async def patch(self, path: str, body: Any = None, **options: Any) -> Any:
+        return (await self.request("PATCH", path, body=body, **options)).get("body")
 
-    def delete(self, path: str, **options: Any) -> Any:
-        return self.request("DELETE", path, **options).get("body")
+    async def delete(self, path: str, **options: Any) -> Any:
+        return (await self.request("DELETE", path, **options)).get("body")
 
-    def paged(self, path: str, **options: Any) -> Iterator[Dict[str, Any]]:
+    def paged(self, path: str, version: Optional[str] = None, **options: Any) -> AsyncIterator[Dict[str, Any]]:
         """Walk every page, yielding items.
 
-        A generator is the language-native equivalent of the ``IAsyncEnumerable`` the core uses
-        internally. There is no cursor state in the native library, so abandoning this half way
+        An async generator, so nothing buffers the whole collection and abandoning it half way
         leaks nothing.
         """
-        response = self.request("GET", path, **options)
-        while True:
-            yield from (response.get("body") or {}).get("value", [])
+        return _operations.paged(self._transport, build_url(path, version, odata(options)))
 
-            next_link = response.get("nextLink")
-            if not next_link:
-                return
-            # The next link is a complete, self-describing cursor; echo it straight back.
-            response = self.request("GET", next_link)
+    async def batch(
+        self, requests: Sequence[_operations.BatchRequest], version: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Send many requests as one call.
 
-    def batch(self, requests: Iterable[BatchRequest], **options: Any) -> List[Dict[str, Any]]:
-        """Send many requests as one.
-
-        The core chunks at Graph's limit of 20 and restores submission order, so results align
-        positionally with what was sent. A failing sub-request is reported in place with its own
-        ``status``, never raised — one failure must not discard its siblings.
+        Split at Graph's limit of twenty, dispatched concurrently, and returned in the order you
+        sent them. A failing sub-request is reported in place with its own ``status`` rather than
+        raised -- one failure must not discard nineteen successes.
         """
-        prepared: List[Dict[str, Any]] = []
-        for index, request in enumerate(requests):
-            if isinstance(request, tuple):
-                method, url = request
-                request = {"method": method, "url": url}
-            prepared.append({"id": str(index), **request})
-
-        response = self.request("POST", "/$batch", body={"requests": prepared}, **options)
-        return (response.get("body") or {}).get("responses", [])
+        return await _operations.batch(self._transport, requests, version)
 
     # ── files ────────────────────────────────────────────────────────────────
 
-    def download(self, path: str, dest_path: str, **options: Any) -> Dict[str, Any]:
-        """Stream a Graph response straight to ``dest_path``.
+    async def download(
+        self, path: str, dest_path: str, version: Optional[str] = None, **options: Any
+    ) -> Dict[str, Any]:
+        """Stream a response straight to disk. The directory must already exist."""
+        url = build_url(path, version, odata(options))
+        return await _operations.download(self._transport, url, dest_path)
 
-        The directory must already exist. The bytes never enter a JSON envelope and never fully
-        enter memory, so file size is bounded by disk rather than RAM.
-        """
-        envelope = self._envelope("GET", path, options.pop("version", None), None,
-                                  options.pop("headers", None), options.pop("timeout_ms", None),
-                                  options)
-        envelope["destPath"] = dest_path
-
-        return call("graph_download", self._require_open(), dumps(envelope))
-
-    def upload(self, path: str, source_path: str, **options: Any) -> Dict[str, Any]:
-        """Send a local file, switching to a chunked upload session above 4 MiB."""
-        envelope = self._envelope("PUT", path, options.pop("version", None), None,
-                                  options.pop("headers", None), options.pop("timeout_ms", None),
-                                  options)
-        envelope["sourcePath"] = source_path
-
-        return call("graph_upload", self._require_open(), dumps(envelope))
+    async def upload(
+        self, path: str, source_path: str, version: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Send a local file, switching to a resumable session above 4 MiB on its own."""
+        return await _operations.upload(self._transport, path, source_path, version)
 
     # ── lifetime ─────────────────────────────────────────────────────────────
 
-    def close(self) -> None:
+    async def aclose(self) -> None:
         """Release the session. Safe to call twice."""
-        if self._closed:
-            return
-        self._closed = True
-        call("graph_client_close", self._handle)
+        await self._transport.aclose()
 
-    def __enter__(self) -> "GraphClient":
+    async def __aenter__(self) -> "GraphClient":
         return self
 
-    def __exit__(
+    async def __aexit__(
         self,
         exc_type: Optional[Type[BaseException]],
         exc: Optional[BaseException],
         traceback: Optional[TracebackType],
     ) -> None:
-        self.close()
+        await self.aclose()
 
     def __repr__(self) -> str:
-        state = "closed" if self._closed else "open"
-        return f"<GraphClient handle={self._handle} {state}>"
-
-    # ── internals ────────────────────────────────────────────────────────────
-
-    def _require_open(self) -> int:
-        if self._closed:
-            raise GraphError(0, "invalidHandle", "this client has already been closed")
-        return self._handle
-
-    @staticmethod
-    def _envelope(
-        method: str,
-        path: str,
-        version: Optional[str],
-        body: Any,
-        headers: Optional[Dict[str, str]],
-        timeout_ms: Optional[int],
-        options: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        envelope: Dict[str, Any] = {"method": method, "path": path}
-
-        query = _odata(options)
-        if query:
-            envelope["query"] = query
-        if version is not None:
-            envelope["version"] = version
-        if body is not None:
-            envelope["body"] = body
-        if headers:
-            envelope["headers"] = headers
-        if timeout_ms is not None:
-            envelope["timeoutMs"] = timeout_ms
-
-        return envelope
-
-
-def _add_optional(
-    credentials: Dict[str, Any],
-    scopes: Optional[Sequence[str]],
-    authority_host: Optional[str],
-    max_retries: Optional[int],
-    max_delay_seconds: Optional[int],
-) -> None:
-    if scopes:
-        credentials["scopes"] = list(scopes)
-    if authority_host:
-        credentials["authorityHost"] = authority_host
-
-    retry = {
-        key: value
-        for key, value in (("maxRetries", max_retries), ("maxDelaySeconds", max_delay_seconds))
-        if value is not None
-    }
-    if retry:
-        credentials["retry"] = retry
+        return f"<GraphClient {'closed' if self._transport.closed else 'open'}>"

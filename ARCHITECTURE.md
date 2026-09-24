@@ -1,3 +1,16 @@
+> ## ⚠ This describes the C# core, which is not what ships on this branch
+>
+> On `python-native` the package is implemented natively in Python over `azure-identity` and
+> `msgraph-core`. The C# tree in `src/` and `tests/` is still here, and still passes its own
+> tests, but nothing consumes it: there is no ABI, no native library and no Python binding to it.
+>
+> Read this document for **why** things are shaped the way they are — the access models (§7), the
+> error taxonomy (§9), the header allowlist (§6.7), the batching and upload rules (§8.5, §8.7).
+> Every one of those decisions survived the rewrite and the Python code cites these sections.
+>
+> Do **not** read it for how the package is built or installed. For that see
+> [README.md](README.md) and [USAGE.md](USAGE.md).
+
 # Technical Architecture
 
 A minimal C#/.NET core for Microsoft Entra ID authentication and Microsoft Graph request handling,

@@ -1,12 +1,22 @@
 # Using msgraph_simple from Python
 
-Import one class, hand it credentials, call Graph. Everything behind that — token acquisition and
-refresh, retry, throttling, pagination, batching, chunked uploads, error shaping — happens in a
-compiled C# core. This layer has no dependencies at all.
+Import one class, hand it credentials, call Graph. Sending a mail is one call; booking a Teams
+meeting is one call. Token refresh, retry, throttling, paging, batching and large file transfers
+happen underneath.
 
-> **Before you start.** The wheel is `linux-x64` only and bundles a compiled library, so it will
-> not install on Windows or macOS. Run under WSL, a container, or Linux. If you have no wheel yet,
-> see [Building it](#building-it) at the end.
+```python
+import asyncio
+from msgraph_simple import GraphClient, Scopes
+
+async def main():
+    async with GraphClient.from_env() as graph:
+        await graph.mail.send(to="alice@contoso.com", subject="Hi", body="Hello")
+
+asyncio.run(main())
+```
+
+Everything is `async`. The one piece of ceremony is `asyncio.run(main())` at the top of a script;
+in exchange, concurrency is handled for you and never has to be written by hand.
 
 ---
 
@@ -15,43 +25,45 @@ compiled C# core. This layer has no dependencies at all.
 - [Install](#install)
 - [Pick an access model](#pick-an-access-model) — the one decision that matters
 - [Signing in](#signing-in)
-- [Making requests](#making-requests)
+- [Mail](#mail)
+- [Calendar and meetings](#calendar-and-meetings)
+- [Generic requests](#generic-requests)
 - [Paging](#paging)
-- [Batching](#batching)
+- [Batching, and where the speed comes from](#batching-and-where-the-speed-comes-from)
 - [Files](#files)
 - [Errors](#errors)
 - [Logging](#logging)
-- [Threads and lifetime](#threads-and-lifetime)
+- [Concurrency and lifetime](#concurrency-and-lifetime)
+- [Adding a resource of your own](#adding-a-resource-of-your-own)
 - [Full reference](#full-reference)
 - [Things that will catch you out](#things-that-will-catch-you-out)
-- [Building it](#building-it)
 
 ---
 
 ## Install
 
 ```bash
-pip install msgraph_simple-0.1.0-py3-none-manylinux_2_34_x86_64.whl
+pip install msgraph-simple
 ```
 
-```python
-from msgraph_simple import GraphClient, GraphError
-```
+Pure Python, and it installs anywhere. Two dependencies, both Microsoft's own: `azure-identity`
+for credentials and `msgraph-core` for the supported middleware pipeline.
 
-Three names are exported: `GraphClient`, `GraphError` and `PendingSignIn`. That is the whole API.
+> `msgraph-sdk` is deliberately not used. Its dependency tree does not resolve in practice — `pip`
+> and `uv` both hang on it. `msgraph-core` resolves in a few seconds.
 
 ---
 
 ## Pick an access model
 
-This is the only decision with consequences. Get it wrong and a script has far more reach than you
+The only decision with real consequences. Get it wrong and a script has far more reach than you
 intended.
 
 | | **Application-level** | **Delegated** |
 |---|---|---|
 | Acting as | The application itself | A signed-in person |
 | Reach | **The whole tenant** | Only what that person can already do |
-| `/me` works | No — there is no user | Yes |
+| `/me`, `graph.mail`, `graph.calendar` | No — there is no user | Yes |
 | Human needed | No | Yes, at first sign-in |
 | Entra registration | Confidential client, holds a secret | Public client, holds none |
 | Constructor | `app_only`, `from_env` | `device_code`, `interactive` |
@@ -59,8 +71,7 @@ intended.
 `Mail.Read` as an **application** permission reads every mailbox in the tenant. The same name as a
 **delegated** permission reads only the signed-in person's mail.
 
-These are normally two separate Entra app registrations. Setup for each is in
-[ARCHITECTURE.md §7.2](ARCHITECTURE.md#72-entra-app-registration).
+The `graph.mail` and `graph.calendar` resources address `/me`, so they need **delegated** access.
 
 ---
 
@@ -68,274 +79,339 @@ These are normally two separate Entra app registrations. Setup for each is in
 
 ### Application-level, from the environment
 
-The usual path for a job or a daemon. Reads `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and
-`AZURE_CLIENT_SECRET`, and names any that are missing.
-
 ```python
-with GraphClient.from_env() as graph:
-    users = graph.get("/users", select="id,mail")
+async with GraphClient.from_env() as graph:          # AZURE_TENANT_ID / _CLIENT_ID / _CLIENT_SECRET
+    users = await graph.get("/users", select="id,mail")
 ```
 
-### Application-level, explicit
+Or explicitly:
 
 ```python
 graph = GraphClient.app_only(
     tenant_id="contoso.onmicrosoft.com",
     client_id="...",
     client_secret="...",
-    scopes=None,                 # defaults to .default, which is what you want
-    authority_host=None,         # set only for a sovereign cloud
-    max_retries=None,            # see "Throttling" below
-    max_delay_seconds=None,
+    max_concurrency=12,          # see "Concurrency" below
 )
 ```
 
-Creating a client does **not** contact Entra. The credential is built locally and the first token
-is fetched on the first request, so a bad secret surfaces then rather than here.
+Building a client contacts nothing. The first token is fetched on the first request, so a bad
+secret surfaces then rather than at construction.
 
 ### Delegated, device code
 
-For headless boxes and containers. Prints Microsoft's own instruction text, then blocks until the
-person finishes on another device.
+For headless boxes and containers — the person signs in on any other device.
 
 ```python
-with GraphClient.device_code(
-    tenant_id="...", client_id="...", scopes=["User.Read", "Mail.Read"],
-) as graph:
-    print(graph.get("/me")["displayName"])
+graph = await GraphClient.device_code(tenant_id, client_id, Scopes.MAIL_SEND)
 ```
 
-To render your own prompt, use the two-phase form:
+To render your own prompt:
 
 ```python
-flow = GraphClient.begin_device_code(tenant_id, client_id, ["User.Read"])
-
+flow = await GraphClient.begin_device_code(tenant_id, client_id, Scopes.MAIL_READ)
 print(f"Go to {flow.verification_uri} and enter {flow.user_code}")
-print(f"The code expires in {flow.expires_in // 60} minutes.")
+print(f"Expires in {flow.expires_in // 60} minutes.")
 
-graph = flow.complete()      # blocks until they finish
-# flow.cancel()              # if you give up instead
+graph = await flow.complete()        # blocks until they finish
+# await flow.cancel()                # if you give up instead
 ```
-
-`PendingSignIn` carries `flow_id`, `user_code`, `verification_uri`, `message`, `authorize_url`,
-`state` and `expires_in`. Which of those are set depends on the flow.
 
 ### Delegated, browser
 
-Opens a browser, listens on loopback for the redirect, and returns a ready client.
-
 ```python
-with GraphClient.interactive(
-    tenant_id="...", client_id="...",
-    scopes=["User.Read"],
+graph = await GraphClient.interactive(
+    tenant_id, client_id,
+    scopes=Scopes.combine(Scopes.MAIL_SEND, Scopes.CALENDARS_READ_WRITE),
     redirect_uri="http://localhost:8400",
-    timeout_seconds=900,
-) as graph:
-    ...
+)
 ```
 
-The redirect URI must match your app registration **character for character**. A registered
-`http://localhost:8400` and a supplied `http://localhost:8400/` are different values to Entra and
-produce AADSTS50011.
+Opens a browser, listens on loopback for exactly one redirect, validates the anti-forgery value
+internally, and exchanges the code using PKCE. The verifier never leaves the process.
 
-**Delegated scopes are never guessed.** Omit `scopes` and you get an error naming the field. There
-is no safe default: `.default` on a delegated flow silently requests every scope ever consented for
+### Scopes
+
+You do not have to remember that sending mail needs `Mail.Send`:
+
+```python
+from msgraph_simple import Scopes
+
+Scopes.MAIL_SEND                 # ("Mail.Send",)
+Scopes.CALENDARS_READ_WRITE
+Scopes.combine(Scopes.MAIL_SEND, Scopes.CALENDARS_READ_WRITE)
+Scopes.EVERYTHING                # handy for a first run; narrow it afterwards
+```
+
+Each resource declares what it needs: `graph.mail.scopes`, `graph.calendar.scopes`.
+
+**Delegated scopes are never guessed.** Omit them and you get an error naming the field. There is
+no safe default — `.default` on a delegated flow silently requests every scope ever consented for
 that client.
 
 ---
 
-## Making requests
+## Mail
 
-Once a client exists, **nothing about the request surface depends on how you authenticated.** You
-can switch a script between access models by changing one constructor call.
+### Sending
 
 ```python
-graph.get("/users/alice@contoso.com")
-graph.post("/users", body={"displayName": "Alice", ...})
-graph.patch("/users/{id}", body={"jobTitle": "Engineer"})
-graph.delete("/users/{id}")
+await graph.mail.send(
+    to="alice@contoso.com",              # or a list
+    subject="Quarterly report",
+    body="<p>Attached.</p>",
+    html=True,
+    cc=["bob@contoso.com"],
+    bcc=None,
+    attachments=["report.pdf"],
+    save_to_sent=True,
+)
 ```
 
-`get`, `post`, `patch` and `delete` return the **response body**. There is no `put`; uploads have
-their own method.
+That one call builds Graph's `sendMail` payload: recipients as nested objects, the body with its
+content type, and each attachment base64-encoded with its `@odata.type` discriminator.
 
-### OData options are plain keywords
+To see the payload without sending, or to build a draft:
 
 ```python
-graph.get("/users",
-          select="id,displayName,mail",
-          filter="accountEnabled eq true",
-          top=999,
-          orderby="displayName")
+message = graph.mail.compose(to="a@x.com", subject="Hi", body="Hello")
 ```
 
-`select`, `filter`, `top`, `skip`, `expand`, `orderby`, `search` and `count` become `$select`,
-`$filter` and so on. Anything else is passed through as a literal query parameter:
+Attachments above roughly 3 MB are refused with advice — Graph rejects the whole message, so the
+answer is to upload to OneDrive and send a link.
+
+### Sending many
 
 ```python
-graph.get("/users/delta", deltaToken="abc")     # -> ?deltaToken=abc
+results = await graph.mail.send_many([
+    {"to": person["mail"], "subject": "Welcome", "body": greeting(person)}
+    for person in people
+])
 ```
 
-You never URL-encode anything; the core does it.
+Twenty per round-trip, batches dispatched concurrently. Failures come back **in the results**, so
+check each `status`.
 
-### The whole envelope, headers, beta
-
-`request` returns everything rather than just the body:
+### Reading
 
 ```python
-response = graph.request(
-    "GET", "/users",
-    version="beta",                                 # v1.0 unless you say otherwise
-    headers={"ConsistencyLevel": "eventual"},
-    timeout_ms=30_000,                              # default is 100_000
-    select="id",
+async for message in graph.mail.inbox(unread_only=True):
+    print(message["receivedDateTime"], message["subject"])
+
+async for message in graph.mail.inbox(since=datetime.now(timezone.utc) - timedelta(days=7)):
+    ...
+
+async for message in graph.mail.inbox(search="invoice"):
+    ...
+```
+
+Newest first. `search` replaces the filter and ordering, because Graph forbids combining them.
+
+### Acting on a message
+
+```python
+await graph.mail.reply(message_id, comment="Thanks", reply_all=False)
+await graph.mail.forward(message_id, to="b@x.com", comment="FYI")
+await graph.mail.mark_read(message_id)
+await graph.mail.move(message_id, folder="archive")
+await graph.mail.delete_many([id_a, id_b, id_c])       # batched
+```
+
+---
+
+## Calendar and meetings
+
+### Booking
+
+```python
+event = await graph.calendar.schedule(
+    subject="Project sync",
+    start=datetime(2026, 3, 2, 9, 0, tzinfo=timezone.utc),
+    end=datetime(2026, 3, 2, 9, 30, tzinfo=timezone.utc),
+    attendees=["alice@contoso.com"],
+    optional_attendees=["bob@contoso.com"],
+    online=True,                  # adds the Teams join link
+    location="Room 3",
+    body="Agenda: progress, blockers.",
+    reminder_minutes=15,
 )
 
-response["status"]     # 200
-response["headers"]    # only an allow-listed set; never Authorization
-response["body"]
-response["nextLink"]   # present only when there is another page
+print(event["onlineMeeting"]["joinUrl"])
 ```
 
-You cannot supply an `Authorization` header — it is rejected before the request leaves. The core
-owns authentication, and accepting one would bypass the credential your client was built with.
+`online=True` sets both `isOnlineMeeting` **and** `onlineMeetingProvider` — the first alone
+produces an event with no join link, which is a common and confusing mistake. Times become the
+`dateTime`/`timeZone` pairs Graph wants; a timezone-aware value is converted to UTC, and a naive
+one keeps the `timezone_name` you pass.
+
+### Finding a slot first
+
+```python
+suggestions = await graph.calendar.find_times(
+    ["alice@contoso.com", "bob@contoso.com"], duration_minutes=30, within_days=5
+)
+best = suggestions[0]["meetingTimeSlot"]
+```
+
+Or look at raw availability:
+
+```python
+await graph.calendar.free_busy(["alice@contoso.com"], start, end, interval_minutes=30)
+```
+
+### Reading and responding
+
+```python
+async for event in graph.calendar.upcoming(days=7):
+    print(event["start"]["dateTime"], event["subject"])
+
+await graph.calendar.respond(event_id, "accept", comment="See you")   # or decline / tentativelyAccept
+await graph.calendar.cancel(event_id, comment="Clashes")
+```
+
+`upcoming` uses `calendarView`, which expands recurring series. Listing `/me/events` returns the
+series master instead of its occurrences — rarely what you want.
+
+---
+
+## Generic requests
+
+Anything the resources do not cover:
+
+```python
+await graph.get("/users/alice@contoso.com")
+await graph.post("/teams", body={...})
+await graph.patch("/users/{id}", body={"jobTitle": "Engineer"})
+await graph.delete("/users/{id}")
+```
+
+OData options are plain keywords — `select`, `filter`, `top`, `skip`, `expand`, `orderby`,
+`search`, `count`:
+
+```python
+await graph.get("/users", select="id,mail", filter="accountEnabled eq true", top=999)
+```
+
+Anything else becomes a literal query parameter. You never URL-encode anything.
+
+For the whole envelope, the preview endpoint, or custom headers:
+
+```python
+response = await graph.request(
+    "GET", "/users",
+    version="beta",
+    headers={"ConsistencyLevel": "eventual"},
+    select="id",
+)
+response["status"]; response["headers"]; response["body"]; response.get("nextLink")
+```
 
 `path` may also be a full URL, in which case `version` and the OData options are ignored because
-the URL already carries them. That is what makes echoing a `nextLink` back work.
+the URL already carries them. An `Authorization` header is rejected — the client owns that.
 
 ---
 
 ## Paging
 
-A generator. It fetches one page at a time and stops when you do.
+An async generator. One page at a time, stopping when you do.
 
 ```python
-for user in graph.paged("/users", select="id,mail", top=999):
+async for user in graph.paged("/users", select="id,mail", top=999):
     print(user["mail"])
 ```
 
-Break out early and nothing leaks — there is no cursor state in the native library, so an
-abandoned generator holds nothing.
-
-```python
-first_ten = list(itertools.islice(graph.paged("/users"), 10))
-```
+Break out early and nothing leaks; the next page is simply never fetched.
 
 ---
 
-## Batching
+## Batching, and where the speed comes from
 
-Many requests as one call. The core splits at Graph's limit of 20 and puts the results back in the
-order you sent them, so they line up positionally with your input.
+Batching is the big lever, not asyncio:
+
+| | 500 user lookups |
+|---|---|
+| One request at a time | 500 round-trips |
+| `graph.batch(...)` | **25 round-trips** |
+| …dispatched concurrently | **~5 round-trip times** |
 
 ```python
-results = graph.batch([
+results = await graph.batch([
     ("GET", "/users"),
     ("GET", "/groups"),
-    {"method": "POST", "url": "/users", "body": {"displayName": "Alice"}},
+    {"method": "POST", "url": "/users", "body": {...}},
 ])
 ```
 
-A tuple is `(method, url)`; a dict is passed through so you can add a body or headers. Either way
-an `id` is assigned for you if you do not supply one.
-
-**Sub-request failures are not raised.** One failure must not discard nineteen successes, so each
-result carries its own status and you check them:
+Split at Graph's limit of 20, dispatched concurrently under the client's concurrency limit, and
+returned **in the order you sent them**. A failing sub-request is reported in place:
 
 ```python
-for i, result in enumerate(results):
+for index, result in enumerate(results):
     if not 200 <= result["status"] < 300:
-        print(f"request {i} failed: {result['status']}", result["body"].get("error"))
+        print(index, result["status"], result["body"].get("error"))
 ```
 
-A `dependsOn` chain must stay inside one group of 20 — a dependency spanning a chunk boundary
+Every resource also gets `get_many`, which does this for you:
+
+```python
+messages = await graph.mail.get_many(message_ids)
+```
+
+A `dependsOn` chain must stay within one group of 20 — a dependency spanning a chunk boundary
 fails at Graph.
 
 ---
 
 ## Files
 
-### Download
-
-Streams straight to disk. The bytes never enter a JSON envelope and never fully enter memory, so
-size is bounded by disk rather than RAM.
-
 ```python
-result = graph.download("/me/drive/items/{id}/content", "local.bin")
+result = await graph.download("/me/drive/items/{id}/content", "local.bin")
 result["bytesWritten"]
-result["destPath"]
-```
 
-The destination **directory must already exist** — the core will not create it. A failed or
-cancelled download leaves nothing behind: it writes to a temporary name and renames only on
-success.
-
-```python
-Path(dest).parent.mkdir(parents=True, exist_ok=True)
-graph.download(path, dest)
-```
-
-### Upload
-
-```python
-result = graph.upload("/me/drive/root:/big.zip:/content", "big.zip")
+result = await graph.upload("/me/drive/root:/big.zip:/content", "big.zip")
 result["bytesSent"]
-result["body"]["id"]
 ```
 
-Below 4 MiB this is a single `PUT`. At or above it the core switches to a resumable upload session
-in 10 MiB chunks, on its own — you write the same call either way and never learn which ran.
+Downloads stream to disk — the bytes never enter memory or a JSON envelope. The destination
+directory must already exist; a failed download leaves nothing behind, because it writes to a
+temporary name and renames only on success.
 
-Large transfers can outlast the default 100-second timeout:
-
-```python
-graph.upload(path, "big.zip", timeout_ms=600_000)
-```
+Uploads switch to a resumable session above 4 MiB automatically, in 10 MiB chunks, resuming from
+whatever Graph says it already has.
 
 ---
 
 ## Errors
 
-One exception type carrying data, rather than a hierarchy. You branch on `status` and `code`.
+One exception type carrying data, rather than a hierarchy.
 
 ```python
+from msgraph_simple import GraphError
+
 try:
-    graph.get("/users/nope")
+    await graph.get("/users/nope")
 except GraphError as e:
-    e.status        # HTTP status, or 0 when there was no HTTP response at all
+    e.status        # HTTP status, or 0 when there was no response at all
     e.code          # "itemNotFound", or a core code such as "timeout"
     e.message
     e.request_id    # quote this to Microsoft support
     e.retry_after   # seconds, when Graph said so
-    e.inner         # Graph's own inner error, preserved verbatim
+    e.inner         # Graph's own inner error, verbatim
 ```
-
-`status` is **0** for failures with no response behind them: a timeout, a DNS failure, a bad
-secret, a malformed call.
 
 ### Throttling
 
-Usually already handled — the pipeline honours `Retry-After` and retries. Catching
-`activityLimitReached` means the retry budget ran out:
+Usually already handled: the middleware honours `Retry-After` and retries. Catching
+`activityLimitReached` means the budget ran out.
 
 ```python
 except GraphError as e:
     if e.code == "activityLimitReached" and e.retry_after:
-        time.sleep(e.retry_after)
+        await asyncio.sleep(e.retry_after)
 ```
 
-Microsoft throttles per application and per tenant rather than banning an IP, and honouring
-`Retry-After` is what keeps you in good standing. **Do not substitute a shorter delay.** If you hit
-this constantly, fetch less: `select` only the fields you use, raise `top`, and batch related calls.
-
-To make a request give up sooner rather than sit in a retry loop:
-
-```python
-graph = GraphClient.app_only(..., max_retries=2, max_delay_seconds=30)
-```
-
-`max_retries` is attempts after the first. `max_delay_seconds` caps the **total** time spent
-retrying one request, not the per-attempt wait — that stays whatever Graph asked for.
+Do not substitute a shorter delay — it makes things worse. If you hit this constantly, fetch less:
+`select` only the fields you use, raise `top`, and batch related calls.
 
 Every code, its cause and its fix is in [docs/troubleshooting.md](docs/troubleshooting.md).
 
@@ -343,73 +419,105 @@ Every code, its cause and its fix is in [docs/troubleshooting.md](docs/troublesh
 
 ## Logging
 
-Off unless you ask. One JSON object per line on **stderr**, so it will not corrupt anything you
-write to stdout.
+Off unless you ask. One JSON object per line on **stderr**.
 
 ```bash
 MSGRAPH_LOG_LEVEL=info python your_script.py
 ```
 
 ```
-{"level":"info","event":"sessionCreated","handle":1}
 {"level":"info","event":"request","method":"GET","url":"https://graph.microsoft.com/v1.0/users","status":200,"ms":214,"requestId":"a1b2c3d4","errorCode":null}
 ```
 
-`error` logs failures only; `info` adds successes and session lifecycle. Anything else, including a
-typo, means off.
-
-URLs are logged **without their query string** — an OData `$filter` routinely carries email
-addresses — and headers, bodies and credential material are never logged. Correlate with
-`requestId`.
+`error` logs failures only; `info` adds successes. URLs are logged **without their query string**,
+because an OData `$filter` routinely carries email addresses, and headers, bodies and credential
+material are never logged at all.
 
 ---
 
-## Threads and lifetime
+## Concurrency and lifetime
 
-A client is safe to share across threads. `HttpClient` is thread-safe, token refresh is serialised
-internally, and the handle registry is concurrent. Threads sharing one client also share a
-connection pool and a token cache, which is what you want.
-
-Creating one per thread works but is wasteful — and for delegated access it is worse than
-wasteful, because each would prompt its own sign-in.
+Concurrency is handled inside the library. `batch`, `get_many` and `send_many` dispatch under a
+bounded semaphore, so you get parallelism without writing `asyncio.gather` and without being
+throttled for going too wide.
 
 ```python
-with GraphClient.from_env() as graph:              # closes on exit, including on an exception
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        pool.map(lambda uid: graph.get(f"/users/{uid}"), user_ids)
+graph = GraphClient.app_only(..., max_concurrency=12)   # the default
 ```
 
-Using a client after `close()` raises `invalidHandle` without crossing the boundary. Closing twice
-is harmless.
+The default is deliberately modest. Graph throttles per app and per tenant, and mailbox operations
+are limited to a handful of concurrent requests per mailbox, so the ceiling is the service's
+rather than Python's — going wider earns 429s, not throughput.
 
-For `asyncio`, wrap calls in `asyncio.to_thread` — `ctypes` releases the GIL for the duration of a
-call, so other threads keep running.
+If you do orchestrate your own work, the client is safe to use concurrently **within one event
+loop**:
+
+```python
+async with GraphClient.from_env() as graph:
+    results = await asyncio.gather(*(graph.get(f"/users/{i}") for i in ids))
+```
+
+`async with` always closes, including when the body raises. Using a closed client raises
+`invalidHandle` without touching the network. Closing twice is harmless.
+
+---
+
+## Adding a resource of your own
+
+Every Graph collection shares the same operations over a different path, so a new one is a
+subclass and nothing else moves:
+
+```python
+from msgraph_simple._resources.base import GraphResource
+
+class Teams(GraphResource):
+    path = "/me/joinedTeams"
+    scopes = ("Team.ReadBasic.All",)
+
+    async def channels(self, team_id: str):
+        return await self._client.get(f"/teams/{team_id}/channels")
+
+graph.teams = Teams(graph)
+```
+
+`list`, `get`, `create`, `update`, `delete` and `get_many` come from the base. `_action` posts to
+an action on one item; `_collection_action` posts to one on the collection's owner.
 
 ---
 
 ## Full reference
 
-### `GraphClient` constructors
+### Constructors
 
 | | |
 |---|---|
-| `app_only(tenant_id, client_id, client_secret, scopes=None, authority_host=None, max_retries=None, max_delay_seconds=None)` | Application-level |
-| `from_env(**overrides)` | Application-level from `AZURE_*` variables |
-| `device_code(tenant_id, client_id, scopes, authority_host=None)` | Delegated, blocks |
-| `begin_device_code(tenant_id, client_id, scopes, authority_host=None)` | Delegated, returns a `PendingSignIn` |
-| `interactive(tenant_id, client_id, scopes, redirect_uri="http://localhost:8400", authority_host=None, timeout_seconds=900)` | Delegated, browser |
+| `GraphClient.app_only(tenant_id, client_id, client_secret, scopes=None, authority_host=None, max_concurrency=12)` | Application-level |
+| `GraphClient.from_env(**overrides)` | Application-level from `AZURE_*` |
+| `await GraphClient.device_code(tenant_id, client_id, scopes, authority_host=None)` | Delegated, blocks |
+| `await GraphClient.begin_device_code(...)` | Delegated, returns a `PendingSignIn` |
+| `await GraphClient.interactive(tenant_id, client_id, scopes, redirect_uri=..., timeout_seconds=900)` | Delegated, browser |
 
-### `GraphClient` methods
+### Client
 
 | | Returns |
 |---|---|
-| `request(method, path, version=None, body=None, headers=None, timeout_ms=None, **odata)` | The whole envelope |
-| `get(path, **odata)` · `post(path, body=None, **odata)` · `patch(...)` · `delete(...)` | The response body |
-| `paged(path, **odata)` | A generator of items |
-| `batch(requests, **odata)` | A list of per-request results |
-| `download(path, dest_path, **odata)` | `{bytesWritten, destPath, status, headers}` |
-| `upload(path, source_path, **odata)` | `{bytesSent, body, status, headers}` |
-| `close()` | — |
+| `await request(method, path, version=None, body=None, headers=None, **odata)` | The envelope |
+| `await get / post / patch / delete(...)` | The body |
+| `paged(path, **odata)` | Async generator of items |
+| `await batch(requests)` | List of per-request results, in submission order |
+| `await download(path, dest_path)` | `{bytesWritten, destPath, status, headers}` |
+| `await upload(path, source_path)` | `{bytesSent, body, status, headers}` |
+| `await aclose()` | — |
+
+### Resources
+
+Both inherit `list`, `get`, `create`, `update`, `delete`, `get_many` from `GraphResource`.
+
+**`graph.mail`** — `send`, `send_many`, `compose`, `reply`, `forward`, `inbox`, `mark_read`,
+`move`, `delete_many`
+
+**`graph.calendar`** — `schedule`, `schedule_many`, `compose`, `upcoming`, `respond`, `cancel`,
+`find_times`, `free_busy`
 
 ### `GraphError`
 
@@ -417,42 +525,21 @@ call, so other threads keep running.
 
 ### `PendingSignIn`
 
-`flow_id` · `user_code` · `verification_uri` · `message` · `authorize_url` · `state` ·
-`expires_in` · `complete(**completion)` · `cancel()`
+`user_code` · `verification_uri` · `message` · `authorize_url` · `state` · `expires_in` ·
+`await complete()` · `await cancel()`
 
 ---
 
 ## Things that will catch you out
 
-- **`/me` does nothing useful under application access.** There is no signed-in person. Use
-  `/users/{id}`.
-- **A 403 on something the person can evidently do** usually means delegated scopes. Effective
-  rights are the intersection of what you asked for and what they could already do.
-- **Application permissions need admin consent** and are inert without it. No amount of retrying
-  helps.
-- **`get` returns the body, `request` returns the envelope.** If you want `nextLink` or the status,
-  use `request`.
+- **`graph.mail` and `graph.calendar` need delegated access.** They address `/me`, and under
+  application access there is no signed-in person.
+- **A 403 on something the person can evidently do** is usually scope intersection: delegated
+  rights are what you asked for *and* what they already had.
+- **Application permissions need admin consent** and are inert without it.
+- **`get` returns the body; `request` returns the envelope.** For `nextLink` or the status, use
+  `request`.
 - **Batch failures are in the results, not in an exception.**
-- **The download directory must exist.**
-- **A wheel will not install outside Linux.** That is deliberate, not a bug.
-
----
-
-## Building it
-
-No wheel yet? It must be built on Linux — the compiled core cannot be produced on Windows.
-
-```bash
-docker build -f build/Dockerfile -t msgraph-core-build .
-docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest" \
-       msgraph-core-build cp /out/MicrosoftGraph.so /dest/
-
-python -m build --wheel python/ \
-       -C--build-option=--plat-name=manylinux_2_34_x86_64
-```
-
-The container runs the C# test suite before producing anything, so the library never comes out of
-code that does not pass.
-
-Working examples live in [samples/](samples). The design, and why any of this is shaped the way it
-is, is in [ARCHITECTURE.md](ARCHITECTURE.md).
+- **`online=True` is what gets you a Teams link**, not `location="Teams"`.
+- **The download directory must already exist.**
+- **Everything is `async`.** Forgetting `await` gives you a coroutine object, not data.

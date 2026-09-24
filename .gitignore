@@ -13,16 +13,13 @@ obj/
 __pycache__/
 *.py[cod]
 *.egg-info/
-build/lib/
 dist/
 .venv/
 venv/
 
-# ── The native core ─────────────────────────────────────────────────────────
-# Built by build/Dockerfile and copied in before the wheel is packed. It is a
-# compiled artefact of this repository, so it is produced rather than tracked.
-python/msgraph_simple/_lib/*
-!python/msgraph_simple/_lib/.gitkeep
+# setuptools build output, at any depth.
+**/build/lib/
+**/build/bdist.*/
 
 # ── Local ───────────────────────────────────────────────────────────────────
 # Never commit credential material. Secrets are read from the environment.

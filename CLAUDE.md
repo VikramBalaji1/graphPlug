@@ -2,38 +2,44 @@
 
 ## Overview
 
-A minimal C#/.NET package for unified Microsoft Entra ID authentication and Microsoft Graph API request handling.
+A plug-and-play Python package for Microsoft Entra ID authentication and Microsoft Graph, with a
+resource layer that makes mail and calendar work one call rather than twenty lines of nested JSON.
 
-C# is the canonical implementation. The package will later serve as the core for a Python developer interface.
+Python is the implementation. The C# tree under `src/` and `tests/` is the previous implementation,
+kept on this branch pending a decision; nothing consumes it.
 
 ## Tech Stack
 
-* .NET 10
-* C#
-* Microsoft Graph SDK for .NET
-* Azure.Identity
-* xUnit
-* FluentAssertions
+* Python 3.9+, async throughout
+* azure-identity (credentials)
+* msgraph-core (the supported middleware pipeline)
+* unittest with IsolatedAsyncioTestCase, and httpx.MockTransport as the seam
+
+Deliberately NOT msgraph-sdk: its dependency tree does not resolve in practice.
 
 ## Project Structure
 
 ```text
-src/
-└── MicrosoftGraph/
-    ├── Authentication/
-    ├── Graph/
-    ├── Models/
-    └── MicrosoftGraph.csproj
+python/
+├── msgraph_simple/
+│   ├── __init__.py       public surface: GraphClient, GraphError, PendingSignIn, Scopes
+│   ├── _http.py          the middleware pipeline, auth attachment, concurrency limit
+│   ├── _auth.py          credentials, PKCE, the loopback redirect listener
+│   ├── _request.py       URL building, OData, the response header allowlist
+│   ├── _errors.py        GraphError and the code taxonomy
+│   ├── _operations.py    paging, batching, download, the two upload strategies
+│   ├── _log.py           opt-in structured logging
+│   ├── _scopes.py        named permissions
+│   └── _resources/       base.py, mail.py, calendar.py
+└── tests/
 
-tests/
-├── UnitTests/
-└── IntegrationTests/
+samples/   runnable scripts
+docs/      troubleshooting
 
-docs/
-samples/
+src/ tests/ build/        the previous C# implementation; nothing consumes it
 ```
 
-Keep `src/MicrosoftGraph/` limited to the production code required by the package.
+Keep `python/msgraph_simple/` limited to the production code required by the package.
 
 Add files and folders only when the implementation requires them.
 
@@ -151,25 +157,27 @@ Use Microsoft's supported retry infrastructure where appropriate.
 
 Handle transient failures and Graph throttling consistently.
 
-Avoid implementing custom infrastructure when the Microsoft Graph SDK or .NET already provides the required behavior.
+Avoid implementing custom infrastructure when azure-identity or msgraph-core already provides the required behavior.
 
 ## Testing
 
-Use xUnit and FluentAssertions.
+Use `unittest` with `IsolatedAsyncioTestCase`. The seam is `httpx.MockTransport`, wrapped by the
+real msgraph-core middleware, so tests exercise the same retry and redirect path production does.
+No test dependency beyond the package's own.
 
-Unit tests cover:
+Tests cover:
 
 * Authentication behavior
 * Request construction
 * Graph responses
 * Pagination
 * Error handling
-* Retry behavior
-* Serialization
+* Retry behaviour, including that the middleware pipeline actually engages
+* Batching, upload strategy selection and file round-trips
+* The exact payloads the mail and calendar resources build
+* Concurrency bounds
 
-Integration tests verify realistic Graph HTTP interactions using controlled responses.
-
-Live Graph tests use dedicated test environments and credentials.
+Live Graph tests use dedicated test environments and credentials, and skip without them.
 
 ## Dependencies
 
@@ -177,52 +185,43 @@ Keep dependencies minimal.
 
 Prefer:
 
-* .NET platform APIs
-* Azure.Identity
-* Microsoft Graph SDK
+* The Python standard library
+* azure-identity
+* msgraph-core
 
 Use additional dependencies only when they provide functionality required by the package.
 
 ## Package
 
-The Python wheel is the only package artifact. The C# core is not published to NuGet: every type in it
-is internal and the wheel loads the natively compiled library rather than referencing the assembly.
+The Python wheel is the only package artifact, and it is pure Python: `py3-none-any`, installable
+anywhere.
 
-The C# implementation is the source of truth for authentication and Microsoft Graph behavior.
-
-The future Python interface consumes this C# core rather than reimplementing authentication or Graph functionality.
+Behaviour is defined by Microsoft's own libraries wherever they provide it. Where they do not --
+batching, paging, chunked upload, the resource payloads -- this package owns it, and
+ARCHITECTURE.md records why each rule is what it is.
 
 ## Development
-
-Build:
-
-```bash
-dotnet build
-```
 
 Test:
 
 ```bash
-dotnet test
+cd python && python -m unittest discover -s tests
 ```
 
-Format:
+Install for development:
 
 ```bash
-dotnet format
+pip install -e python/
 ```
 
-Build the native library and the wheel (Linux only):
+Build the wheel:
 
 ```bash
-docker build -f build/Dockerfile -t msgraph-core-build .
-docker run --rm -v "$PWD/python/msgraph_simple/_lib:/dest" \
-       msgraph-core-build cp /out/MicrosoftGraph.so /dest/
-python -m build --wheel python/ \
-       -C--build-option=--plat-name=manylinux_2_34_x86_64
+python -m build --wheel python/
 ```
 
 ## Guiding Principle
 
-Build the smallest reliable C# core that provides unified Microsoft Entra ID authentication and Microsoft Graph request handling.
+Build the smallest reliable Python package that makes Microsoft Graph plug and play: one call to
+send a mail, one to book a meeting, and nothing to configure.
 

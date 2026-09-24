@@ -4,23 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "msgraph-simple"
-version = "0.1.0"
-description = "Unified Microsoft Entra ID authentication and Microsoft Graph request handling."
+version = "0.2.0"
+description = "Plug-and-play Microsoft Graph for Python: mail, calendar and generic requests."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Arvind Vikram" }]
 
-# Deliberately empty. A package whose selling point is "plug and play" should not begin with a
-# dependency resolution; everything the binding needs is in the standard library.
-dependencies = []
+# Microsoft's own libraries do the work this package would otherwise have to:
+#   azure-identity  credential acquisition, caching and refresh
+#   msgraph-core    the supported middleware pipeline (retry, Retry-After, redirect, telemetry)
+# msgraph-sdk is deliberately NOT used: its dependency tree does not resolve in practice.
+dependencies = [
+    "azure-identity>=1.19",
+    "msgraph-core>=1.3",
+]
 
-# The wheel is platform-specific; see setup.py. Build it with the glibc floor of the image the
-# library came from:
-#     python -m build --wheel python/ #            -C--build-option=--plat-name=manylinux_2_34_x86_64
+[project.urls]
+Documentation = "https://github.com/arvind/microsoftgraph/blob/main/USAGE.md"
+
 [tool.setuptools.packages.find]
 include = ["msgraph_simple*"]
 
 [tool.setuptools.package-data]
-msgraph_simple = ["py.typed", "_lib/*"]
+msgraph_simple = ["py.typed"]
