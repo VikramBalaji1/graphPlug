@@ -22,3 +22,6 @@ graphify-out/
 
 # claude working files
 .claude/
+
+#env vars
+.env
