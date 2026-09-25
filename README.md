@@ -172,7 +172,8 @@ person, as before.
 | You want to | Call |
 |---|---|
 | Send a mail from a mailbox | `graph.mail.send(..., user="reports@example.com")` |
-| Block time in someone's calendar | `graph.calendar.schedule(..., user="alice@example.com")` |
+| Organise a meeting from your mailbox | `graph.calendar.schedule(..., attendees=[...], optional_attendees=[...], user="you@yourcompany.com")` |
+| Block time in a calendar | `graph.calendar.schedule(..., user="you@yourcompany.com")` |
 | Book a room | `graph.calendar.schedule(..., user="room.a@example.com")` |
 | Read a mailbox | `graph.mail.inbox(user="support@example.com")` |
 | Put a file in someone's OneDrive | `graph.files.upload("q3.xlsx", to="/reports/q3.xlsx", user="finance@example.com")` |
@@ -181,24 +182,49 @@ person, as before.
 ```python
 from datetime import datetime, timedelta, timezone
 
+MY_MAILBOX = "you@yourcompany.com"   # your work mailbox: the sender and the meeting organiser
+
 async with GraphClient.from_env() as graph:
-    # A mail from the reports mailbox, with no one signed in
+    # A mail from your mailbox, with no one signed in
     await graph.mail.send(
-        to="team@example.com", subject="Nightly report", body="All green.",
-        user="reports@example.com",
+        to="team@yourcompany.com", subject="Nightly report", body="All green.",
+        user=MY_MAILBOX,
     )
 
-    # Block two hours of focus time in Alice's calendar (events show as busy)
+    # A meeting organised from your calendar. Invitations go out from your mailbox.
     start = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
     await graph.calendar.schedule(
-        subject="Focus time", start=start, end=start + timedelta(hours=2),
-        user="alice@example.com",
+        subject="Design review",
+        start=start, end=start + timedelta(hours=1),
+        attendees=["alice@yourcompany.com", "bob@yourcompany.com"],  # required
+        optional_attendees=["carol@yourcompany.com"],                # optional
+        online=True,                                                 # adds a Teams link
+        user=MY_MAILBOX,
     )
 
-    # Is Alice free? Ask on her behalf
-    busy = await graph.calendar.free_busy(["alice@example.com"], start,
-                                          start + timedelta(hours=8), user="alice@example.com")
+    # Block two hours of focus time in your own calendar (no attendees; shows as busy)
+    await graph.calendar.schedule(
+        subject="Focus time",
+        start=start + timedelta(hours=2), end=start + timedelta(hours=4),
+        user=MY_MAILBOX,
+    )
+
+    # Are the attendees free? Asked from your mailbox
+    busy = await graph.calendar.free_busy(
+        ["alice@yourcompany.com", "bob@yourcompany.com"],
+        start, start + timedelta(hours=8),
+        user=MY_MAILBOX,
+    )
 ```
+
+| `schedule` argument | What to put there |
+|---|---|
+| `user` | Your mailbox: the calendar the event is created in, and who the invitations come from |
+| `attendees` | Required attendees: one address, or a list |
+| `optional_attendees` | Optional attendees: one address, or a list |
+| `online` | `True` to add a Teams meeting link |
+
+Leave both attendee lists out and the event is a private block in `user`'s calendar.
 
 **Set-up in Entra.** Add **application** permissions to the app registration and grant admin
 consent: `Mail.Send` to send, `Mail.ReadWrite` to read and tidy mail, `Calendars.ReadWrite` for
