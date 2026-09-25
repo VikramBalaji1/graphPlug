@@ -224,11 +224,14 @@ async with GraphClient.from_env() as graph:
 | `optional_attendees` | Optional attendees: one address, or a list |
 | `online` | `True` to add a Teams meeting link |
 
-Leave both attendee lists out and the event is a private block in `user`'s calendar.
+Leave both attendee lists out and the event is a private block in `user`'s calendar. To get the
+join link, event id and other details back from `schedule`, see
+[Reading the created meeting](#reading-the-created-meeting).
 
 **Set-up in Entra.** Add **application** permissions to the app registration and grant admin
 consent: `Mail.Send` to send, `Mail.ReadWrite` to read and tidy mail, `Calendars.ReadWrite` for
-calendars, `Files.ReadWrite.All` for OneDrive. These reach **every mailbox in the tenant**, so in
+calendars, `Files.ReadWrite.All` for OneDrive, and `OnlineMeetings.Read.All` if you need a Teams
+meeting's numeric ID and passcode. These reach **every mailbox in the tenant**, so in
 Exchange Online restrict the app to the mailboxes it needs with RBAC for Applications (or an
 application access policy).
 
@@ -398,6 +401,63 @@ await graph.calendar.respond(event_id, "accept", comment="See you there")
 ```
 
 Timezone-aware datetimes are sent in UTC; naive ones are read in `timezone_name`.
+
+### Reading the created meeting
+
+`schedule` returns the event Graph created as a plain `dict`, in Graph's own JSON shape, so you
+read it with ordinary dict access. Nothing is renamed.
+
+| You want | Key |
+|---|---|
+| Teams join link | `event["onlineMeeting"]["joinUrl"]` |
+| Dial-in conference id (with audio conferencing) | `event["onlineMeeting"].get("conferenceId")` |
+| The event's id in the organiser's calendar | `event["id"]` |
+| One id shared by every attendee's copy | `event["iCalUId"]` |
+| Link to open it in Outlook on the web | `event["webLink"]` |
+| Subject, start, end | `event["subject"]`, `event["start"]`, `event["end"]` (times are `{"dateTime", "timeZone"}`) |
+| Organiser | `event["organizer"]["emailAddress"]["address"]` |
+| Attendees and replies | `event["attendees"]`, each with `type` (`required`/`optional`) and `status["response"]` |
+| Created, last changed | `event["createdDateTime"]`, `event["lastModifiedDateTime"]` |
+
+```python
+event = await graph.calendar.schedule(
+    subject="Design review", start=start, end=start + timedelta(hours=1),
+    attendees=["alice@yourcompany.com"], optional_attendees=["carol@yourcompany.com"],
+    online=True, user=MY_MAILBOX,
+)
+
+event_id = event["id"]      # keep this to re-read, update or cancel the event
+join_url = (event.get("onlineMeeting") or {}).get("joinUrl")
+if not join_url:            # Teams occasionally fills this in a moment later
+    event = await graph.calendar.get(event_id, user=MY_MAILBOX)
+    join_url = event["onlineMeeting"]["joinUrl"]
+
+print(event["subject"], event["start"]["dateTime"], event["webLink"])
+for person in event["attendees"]:
+    print(person["emailAddress"]["address"], person["type"], person["status"]["response"])
+
+# Later, always with the same user=
+await graph.calendar.update(event_id, {"subject": "Moved: Design review"}, user=MY_MAILBOX)
+await graph.calendar.cancel(event_id, comment="Postponed", user=MY_MAILBOX)
+```
+
+To see everything Graph returned: `import json; print(json.dumps(event, indent=2))`.
+
+**The numeric Teams meeting ID and passcode** (the ones printed in the invitation) are not on the
+calendar event. They belong to Teams' own meeting record, looked up by the join link:
+
+```python
+found = await graph.get(f"/users/{MY_MAILBOX}/onlineMeetings",
+                        filter=f"JoinWebUrl eq '{join_url}'")
+meeting = found["value"][0]
+teams_meeting_id = meeting["joinMeetingIdSettings"]["joinMeetingId"]
+passcode = meeting["joinMeetingIdSettings"]["passcode"]
+```
+
+Under application access this needs the `OnlineMeetings.Read.All` application permission **and**
+a Teams application access policy that lets the app read the organiser's meetings; without the
+policy Graph answers 403. With delegated access, use `/me/onlineMeetings` and the
+`OnlineMeetings.Read` scope.
 
 ---
 
