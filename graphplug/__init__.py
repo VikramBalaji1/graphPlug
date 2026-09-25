@@ -35,7 +35,7 @@ from ._scopes import Scopes
 
 __all__ = ["GraphClient", "GraphError", "PendingSignIn", "Scopes"]
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 
 class PendingSignIn:
