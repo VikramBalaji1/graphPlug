@@ -12,7 +12,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Vikram Balaji", email = "vikram.x.balaji@gmail.com" }]
+authors = [{ name = "Vikram Balaji"}]
 keywords = ["microsoft-graph", "entra-id", "azure-ad", "outlook", "onedrive", "teams", "asyncio"]
 classifiers = [
     "Development Status :: 4 - Beta",
