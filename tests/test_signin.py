@@ -18,8 +18,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from _support import json_response, make_client
 
-from msgraph_simple import GraphClient, GraphError
-from msgraph_simple import _auth
+from graphplug import GraphClient, GraphError
+from graphplug import _auth
 
 import threading
 

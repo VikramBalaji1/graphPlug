@@ -12,7 +12,7 @@ import asyncio
 import sys
 import time
 
-from msgraph_simple import GraphClient, GraphError
+from graphplug import GraphClient, GraphError
 
 
 async def main() -> int:

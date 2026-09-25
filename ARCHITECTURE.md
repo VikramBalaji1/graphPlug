@@ -23,7 +23,7 @@ play*: import one class, hand it credentials, and call Graph.
 
 ```python
 import asyncio
-from msgraph_simple import GraphClient, Scopes
+from graphplug import GraphClient, Scopes
 
 async def main():
     # Application-level access — app permissions, no user
@@ -469,7 +469,7 @@ Failures with no HTTP response use `status: 0` and a package-defined code:
 
 ### Logging
 
-Off unless asked: `MSGRAPH_LOG_LEVEL=info` or `=error`, one JSON object per line on stderr. URLs are
+Off unless asked: `GRAPHPLUG_LOG_LEVEL=info` or `=error`, one JSON object per line on stderr. URLs are
 logged **without their query string**, because an OData `$filter` routinely carries email addresses.
 Headers, bodies and credential material are never logged.
 

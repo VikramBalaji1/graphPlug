@@ -14,8 +14,8 @@ from datetime import datetime, timedelta, timezone
 
 from _support import json_response, make_client
 
-from msgraph_simple import GraphError
-from msgraph_simple import _errors, _log
+from graphplug import GraphError
+from graphplug import _errors, _log
 
 
 class RetryAfterParsing(unittest.TestCase):
@@ -203,7 +203,7 @@ class Logging(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(_log.parse_level(value), expected)
 
     def test_the_variable_is_the_documented_one(self) -> None:
-        self.assertEqual(_log.LEVEL_VARIABLE, "MSGRAPH_LOG_LEVEL")
+        self.assertEqual(_log.LEVEL_VARIABLE, "GRAPHPLUG_LOG_LEVEL")
 
 
 if __name__ == "__main__":

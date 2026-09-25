@@ -1,4 +1,4 @@
-# msgraph_simple
+# graphplug
 
 Plug-and-play Microsoft Graph for Python. Sending a mail is one call. Booking a Teams meeting is
 one call. Authentication, retries, throttling, paging, batching and large file transfers happen
@@ -6,7 +6,7 @@ underneath.
 
 ```python
 import asyncio
-from msgraph_simple import GraphClient, Scopes
+from graphplug import GraphClient, Scopes
 
 async def main():
     graph = await GraphClient.device_code(TENANT, CLIENT, Scopes.MAIL_SEND)
@@ -31,7 +31,7 @@ asyncio.run(main())
 ## Install
 
 ```bash
-pip install msgraph-simple
+pip install graphplug
 ```
 
 Two dependencies, both Microsoft's own — `azure-identity` for credentials, `msgraph-core` for the
@@ -149,7 +149,7 @@ wait. Every code and its fix is in [docs/troubleshooting.md](docs/troubleshootin
 
 ## Logging
 
-Off unless asked. `MSGRAPH_LOG_LEVEL=info` or `=error`; one JSON object per line on stderr.
+Off unless asked. `GRAPHPLUG_LOG_LEVEL=info` or `=error`; one JSON object per line on stderr.
 
 ```
 {"level":"info","event":"request","method":"GET","url":"https://graph.microsoft.com/v1.0/users","status":200,"ms":214,"requestId":"a1b2c3d4","errorCode":null}

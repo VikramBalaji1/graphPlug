@@ -3,7 +3,7 @@
 Import one class, hand it credentials, call Graph::
 
     import asyncio
-    from msgraph_simple import GraphClient, Scopes
+    from graphplug import GraphClient, Scopes
 
     async def main():
         async with GraphClient.from_env() as graph:

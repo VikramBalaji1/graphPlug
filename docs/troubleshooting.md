@@ -169,7 +169,7 @@ requests within a single group of 20.
 Nothing is logged unless you ask:
 
 ```bash
-MSGRAPH_LOG_LEVEL=info python your_script.py
+GRAPHPLUG_LOG_LEVEL=info python your_script.py
 ```
 
 `error` logs failures only; `info` adds successful requests and session lifecycle. Output is one

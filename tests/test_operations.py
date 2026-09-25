@@ -16,8 +16,8 @@ import httpx
 
 from _support import json_response, make_client
 
-from msgraph_simple import GraphError
-from msgraph_simple._operations import (
+from graphplug import GraphError
+from graphplug._operations import (
     CHUNK_ALIGNMENT, CHUNK_SIZE, CHUNKED_THRESHOLD_BYTES, MAX_BATCH_SIZE, to_session_path,
 )
 
@@ -147,7 +147,7 @@ class UploadStrategy(unittest.TestCase):
 
 class Files(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self.workspace = Path(tempfile.mkdtemp(prefix="msgraph-files-"))
+        self.workspace = Path(tempfile.mkdtemp(prefix="graphplug-files-"))
 
     def tearDown(self) -> None:
         for leftover in self.workspace.glob("*"):

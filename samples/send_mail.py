@@ -9,7 +9,7 @@ import asyncio
 import os
 import sys
 
-from msgraph_simple import GraphClient, GraphError, Scopes
+from graphplug import GraphClient, GraphError, Scopes
 
 
 async def main(recipient: str) -> int:
@@ -29,7 +29,7 @@ async def main(recipient: str) -> int:
         try:
             await graph.mail.send(
                 to=recipient,
-                subject="Hello from msgraph_simple",
+                subject="Hello from graphplug",
                 body="<p>Sent with <b>one call</b>.</p>",
                 html=True,
                 attachments=[__file__],      # this script, as a demonstration

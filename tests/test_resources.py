@@ -18,7 +18,7 @@ import httpx
 
 from _support import json_response, make_client
 
-from msgraph_simple import GraphError, Scopes
+from graphplug import GraphError, Scopes
 
 
 class MailPayloads(unittest.IsolatedAsyncioTestCase):

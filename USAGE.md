@@ -1,4 +1,4 @@
-# Using msgraph_simple from Python
+# Using graphplug from Python
 
 Import one class, hand it credentials, call Graph. Sending a mail is one call; booking a Teams
 meeting is one call. Token refresh, retry, throttling, paging, batching and large file transfers
@@ -6,7 +6,7 @@ happen underneath.
 
 ```python
 import asyncio
-from msgraph_simple import GraphClient, Scopes
+from graphplug import GraphClient, Scopes
 
 async def main():
     async with GraphClient.from_env() as graph:
@@ -45,7 +45,7 @@ in exchange, concurrency is handled for you and never has to be written by hand.
 ## Install
 
 ```bash
-pip install msgraph-simple
+pip install graphplug
 ```
 
 Pure Python, and it installs anywhere. Two dependencies, both Microsoft's own: `azure-identity`
@@ -165,7 +165,7 @@ internally, and exchanges the code using PKCE. The verifier never leaves the pro
 You do not have to remember that sending mail needs `Mail.Send`:
 
 ```python
-from msgraph_simple import Scopes
+from graphplug import Scopes
 
 Scopes.MAIL_SEND                 # ("Mail.Send",)
 Scopes.CALENDARS_READ_WRITE
@@ -528,7 +528,7 @@ fails at Graph.
 One exception type carrying data, rather than a hierarchy.
 
 ```python
-from msgraph_simple import GraphError
+from graphplug import GraphError
 
 try:
     await graph.get("/users/nope")
@@ -564,7 +564,7 @@ Every code, its cause and its fix is in [docs/troubleshooting.md](docs/troublesh
 Off unless you ask. One JSON object per line on **stderr**.
 
 ```bash
-MSGRAPH_LOG_LEVEL=info python your_script.py
+GRAPHPLUG_LOG_LEVEL=info python your_script.py
 ```
 
 ```
@@ -610,7 +610,7 @@ Every Graph collection shares the same operations over a different path, so a ne
 subclass and nothing else moves:
 
 ```python
-from msgraph_simple._resources.base import GraphResource
+from graphplug._resources.base import GraphResource
 
 class Contacts(GraphResource):
     path = "/me/contacts"

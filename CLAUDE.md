@@ -21,7 +21,7 @@ Deliberately NOT msgraph-sdk: its dependency tree does not resolve in practice.
 ## Project Structure
 
 ```text
-msgraph_simple/
+graphplug/
 ├── __init__.py       public surface: GraphClient, GraphError, PendingSignIn, Scopes
 ├── _http.py          the middleware pipeline, auth attachment, concurrency limit
 ├── _auth.py          credentials, PKCE, the loopback redirect listener
@@ -37,7 +37,7 @@ samples/   runnable scripts
 docs/      troubleshooting
 ```
 
-Keep `msgraph_simple/` limited to the production code required by the package.
+Keep `graphplug/` limited to the production code required by the package.
 
 Add files and folders only when the implementation requires them.
 

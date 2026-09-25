@@ -10,7 +10,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-from msgraph_simple import GraphClient, GraphError, Scopes
+from graphplug import GraphClient, GraphError, Scopes
 
 
 async def main(attendees: list) -> int:

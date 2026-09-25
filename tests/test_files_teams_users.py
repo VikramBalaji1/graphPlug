@@ -16,7 +16,7 @@ import httpx
 
 from _support import json_response, make_client
 
-from msgraph_simple import GraphError
+from graphplug import GraphError
 
 
 def query_of(request: httpx.Request) -> dict:
@@ -152,7 +152,7 @@ class DriveAddressing(unittest.IsolatedAsyncioTestCase):
 
 class DriveTransfers(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self.workspace = Path(tempfile.mkdtemp(prefix="msgraph-drive-"))
+        self.workspace = Path(tempfile.mkdtemp(prefix="graphplug-drive-"))
 
     def tearDown(self) -> None:
         for leftover in self.workspace.glob("*"):

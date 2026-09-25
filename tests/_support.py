@@ -17,8 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from azure.core.credentials import AccessToken  # noqa: E402
 
-from msgraph_simple import GraphClient  # noqa: E402
-from msgraph_simple._http import Transport  # noqa: E402
+from graphplug import GraphClient  # noqa: E402
+from graphplug._http import Transport  # noqa: E402
 
 __all__ = ["Recorder", "FakeCredential", "make_client", "json_response"]
 

@@ -17,7 +17,7 @@ import httpx
 
 from _support import FakeCredential, Recorder, json_response, make_client
 
-from msgraph_simple import GraphError
+from graphplug import GraphError
 
 
 class MiddlewareContract(unittest.IsolatedAsyncioTestCase):
@@ -147,7 +147,7 @@ class Concurrency(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(rec.peak_in_flight, 4, "the semaphore did not bound concurrency")
 
     async def test_the_default_limit_is_modest(self) -> None:
-        from msgraph_simple._http import DEFAULT_MAX_CONCURRENCY
+        from graphplug._http import DEFAULT_MAX_CONCURRENCY
         # Graph throttles per app and per tenant; going wide earns 429s rather than throughput.
         self.assertLessEqual(DEFAULT_MAX_CONCURRENCY, 16)
 

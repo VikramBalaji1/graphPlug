@@ -22,8 +22,8 @@ import httpx
 from _support import FakeCredential
 from test_signin import StubDeviceCodeCredential
 
-from msgraph_simple import GraphClient, GraphError
-from msgraph_simple import _auth
+from graphplug import GraphClient, GraphError
+from graphplug import _auth
 
 
 def free_port() -> int:

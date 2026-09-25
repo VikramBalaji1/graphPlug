@@ -1,6 +1,6 @@
 """Opt-in structured logging.
 
-One JSON object per line on stderr, off unless ``MSGRAPH_LOG_LEVEL`` asks for it. Output goes to
+One JSON object per line on stderr, off unless ``GRAPHPLUG_LOG_LEVEL`` asks for it. Output goes to
 stderr because a caller may be piping stdout.
 
 Redaction is structural rather than a rule to remember: every function here takes the exact fields
@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 __all__ = ["LEVEL_VARIABLE", "capture", "is_enabled", "parse_level", "request", "event", "failure"]
 
-LEVEL_VARIABLE = "MSGRAPH_LOG_LEVEL"
+LEVEL_VARIABLE = "GRAPHPLUG_LOG_LEVEL"
 
 OFF, ERROR, INFO = 0, 1, 2
 _NAMES = {ERROR: "error", INFO: "info"}

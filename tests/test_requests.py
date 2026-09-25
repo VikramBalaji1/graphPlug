@@ -11,8 +11,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from _support import json_response, make_client
 
-from msgraph_simple import GraphError
-from msgraph_simple._request import build_url
+from graphplug import GraphError
+from graphplug._request import build_url
 
 
 class UrlBuilding(unittest.TestCase):

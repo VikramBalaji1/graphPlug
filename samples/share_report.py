@@ -13,7 +13,7 @@ import os
 import sys
 from pathlib import Path
 
-from msgraph_simple import GraphClient, GraphError, Scopes
+from graphplug import GraphClient, GraphError, Scopes
 
 SCOPES = Scopes.combine(
     Scopes.FILES_READ_WRITE,
