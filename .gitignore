@@ -19,3 +19,6 @@ htmlcov/
 
 # graphify knowledge-graph output, rebuilt locally.
 graphify-out/
+
+# claude working files
+.claude/
