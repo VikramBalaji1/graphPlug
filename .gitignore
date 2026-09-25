@@ -1,0 +1,28 @@
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# ── Local ───────────────────────────────────────────────────────────────────
+# Never commit credential material. Secrets are read from the environment.
+.env
+*.pfx
+*.pem
+*.pub
+
+# Coverage output, when measuring locally.
+.coverage
+htmlcov/
+
+# graphify knowledge-graph output, rebuilt locally.
+graphify-out/
+
+# claude working files
+.claude/
+
+#UV Files
+uv.lock
