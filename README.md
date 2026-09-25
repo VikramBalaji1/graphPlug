@@ -81,7 +81,8 @@ The client exposes five resources plus generic access to all of Graph:
 |---|---|---|
 | Acts as | Your app itself | A signed-in person |
 | Can reach | **The whole tenant** | Only what that person can already reach |
-| `graph.mail`, `graph.calendar`, `graph.files`, `graph.teams` | No (there is no "me") | Yes |
+| `graph.mail`, `graph.calendar`, `graph.files` | Yes: pass `user=` to name the mailbox ([see below](#acting-for-a-mailbox-with-application-access)) | Yes, on the signed-in person |
+| `graph.teams` | Listing only: `mine(user=)`, `chats(user=)` | Yes |
 | `graph.users` | Yes (pass `user` where a method takes one) | Yes |
 | Needs a person | No | Yes, at sign-in |
 | Entra app registration | Client secret, *application* permissions, admin consent | No secret, *delegated* permissions, "Allow public client flows" on |
@@ -161,6 +162,54 @@ graph = GraphClient.from_credential(ManagedIdentityCredential())
 Sync credentials work too and run on a worker thread. A credential you pass in stays yours:
 closing the client does not close it.
 
+### Acting for a mailbox with application access
+
+An app-only client has no signed-in person, so there is no "me". Every mail, calendar and files
+method, and the shared methods in §9, take a **`user`** argument: the mailbox to act as, given as
+an email address, user principal name or object id. Leave it out and the call uses the signed-in
+person, as before.
+
+| You want to | Call |
+|---|---|
+| Send a mail from a mailbox | `graph.mail.send(..., user="reports@example.com")` |
+| Block time in someone's calendar | `graph.calendar.schedule(..., user="alice@example.com")` |
+| Book a room | `graph.calendar.schedule(..., user="room.a@example.com")` |
+| Read a mailbox | `graph.mail.inbox(user="support@example.com")` |
+| Put a file in someone's OneDrive | `graph.files.upload("q3.xlsx", to="/reports/q3.xlsx", user="finance@example.com")` |
+| Send from several mailboxes at once | `graph.mail.send_many([{..., "user": "a@example.com"}, {..., "user": "b@example.com"}])` |
+
+```python
+from datetime import datetime, timedelta, timezone
+
+async with GraphClient.from_env() as graph:
+    # A mail from the reports mailbox, with no one signed in
+    await graph.mail.send(
+        to="team@example.com", subject="Nightly report", body="All green.",
+        user="reports@example.com",
+    )
+
+    # Block two hours of focus time in Alice's calendar (events show as busy)
+    start = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
+    await graph.calendar.schedule(
+        subject="Focus time", start=start, end=start + timedelta(hours=2),
+        user="alice@example.com",
+    )
+
+    # Is Alice free? Ask on her behalf
+    busy = await graph.calendar.free_busy(["alice@example.com"], start,
+                                          start + timedelta(hours=8), user="alice@example.com")
+```
+
+**Set-up in Entra.** Add **application** permissions to the app registration and grant admin
+consent: `Mail.Send` to send, `Mail.ReadWrite` to read and tidy mail, `Calendars.ReadWrite` for
+calendars, `Files.ReadWrite.All` for OneDrive. These reach **every mailbox in the tenant**, so in
+Exchange Online restrict the app to the mailboxes it needs with RBAC for Applications (or an
+application access policy).
+
+**Not available to apps.** Graph does not let an app post Teams channel or chat messages as a
+person (outside data migration), so `teams.post`, `teams.reply` and `teams.send_chat` still need
+a signed-in person.
+
 ---
 
 ## 3. Permissions (`Scopes`)
@@ -198,7 +247,8 @@ Application access ignores these: it always uses the permissions an admin grante
 
 ## 4. Mail — `graph.mail`
 
-Delegated access. Works on the signed-in person's mailbox.
+Works on the signed-in person's mailbox, or on any mailbox when you pass `user=` (every method
+takes it; required under application access).
 
 | Method | What it does | Returns |
 |---|---|---|
@@ -223,6 +273,7 @@ Delegated access. Works on the signed-in person's mailbox.
 | `html` | `bool` | `False` | Treat `body` as HTML |
 | `attachments` | list of file paths | `None` | Files to attach; about 3 MB in total at most |
 | `save_to_sent` | `bool` | `True` | Keep a copy in Sent Items |
+| `user` | `str` | `None` | Mailbox to send from; the signed-in person when omitted |
 
 ```python
 await graph.mail.send(
@@ -263,7 +314,9 @@ For attachments over about 3 MB, upload the file with `graph.files.upload` and s
 
 ## 5. Calendar and meetings — `graph.calendar`
 
-Delegated access. Works on the signed-in person's calendar.
+Works on the signed-in person's calendar, or on anyone's (a person or a room) when you pass
+`user=` (every method takes it; required under application access). New events show as busy,
+which is what blocks the time.
 
 | Method | What it does | Returns |
 |---|---|---|
@@ -290,6 +343,7 @@ Delegated access. Works on the signed-in person's calendar.
 | `timezone_name` | `str` | `"UTC"` | Zone for times without a timezone, e.g. `"GMT Standard Time"` |
 | `reminder_minutes` | `int` | `None` | Reminder before start |
 | `all_day` | `bool` | `False` | All-day event (use midnight-to-midnight times) |
+| `user` | `str` | `None` | Whose calendar to book; the signed-in person when omitted |
 
 ```python
 from datetime import datetime, timedelta, timezone
@@ -323,8 +377,10 @@ Timezone-aware datetimes are sent in UTC; naive ones are read in `timezone_name`
 
 ## 6. Files (OneDrive) — `graph.files`
 
-Delegated access. Every method takes either a **drive path** (starts with `/`, e.g.
-`"/reports/q3.xlsx"`) or an **item id**. Names with spaces, `#` or `?` are handled for you.
+Works on the signed-in person's OneDrive, or on anyone's when you pass `user=` (every method takes
+it; required under application access). Every method takes either a **drive path** (starts with
+`/`, e.g. `"/reports/q3.xlsx"`) or an **item id**. Names with spaces, `#` or `?` are handled for
+you.
 
 | Method | What it does | Returns |
 |---|---|---|
@@ -367,20 +423,21 @@ Omit `to` in `upload` and the file keeps its own name at the drive root.
 
 ## 7. Teams and chats — `graph.teams`
 
-Delegated access in practice. Reading channel messages with *application* permissions is a
-protected Graph API that Microsoft must approve first; posting as a signed-in person works
-normally.
+Mostly delegated. Under application access, `mine(user=)` and `chats(user=)` list a person's teams
+and chats, but Graph does not let an app post channel or chat messages as someone, so `post`,
+`reply` and `send_chat` need a signed-in person. Reading channel messages with *application*
+permissions is a protected Graph API that Microsoft must approve first.
 
 | Method | What it does | Returns |
 |---|---|---|
-| `mine(select=...)` | Teams the signed-in person belongs to | async iterator of teams |
+| `mine(select=..., user=None)` | Teams the signed-in person, or `user`, belongs to | async iterator of teams |
 | `channels(team_id, select=...)` | Channels in a team | async iterator of channels |
 | `await channel_by_name(team_id, name)` | Find a channel by display name (case-insensitive) | the channel |
 | `members(team_id)` | Who is in a team | async iterator of members |
 | `await post(team_id, channel_id, message, html=False, subject=None, importance="normal")` | Post to a channel; `importance` is `"normal"`, `"high"` or `"urgent"` | the created message |
 | `await reply(team_id, channel_id, message_id, message, html=False)` | Reply in a channel thread | the reply |
 | `messages(team_id, channel_id, top=50, select=...)` | A channel's messages, newest first (replies not included) | async iterator of messages |
-| `chats(select=...)` | The signed-in person's chats | async iterator of chats |
+| `chats(select=..., user=None)` | The signed-in person's chats, or `user`'s | async iterator of chats |
 | `await send_chat(chat_id, message, html=False)` | Send into an existing chat | the created message |
 
 ```python
@@ -443,16 +500,18 @@ page.
 ## 9. Methods every resource has
 
 `mail`, `calendar`, `files`, `teams` and `users` all share these, working on the resource's own
-collection (`/me/messages`, `/me/events`, `/me/drive/items`, `/teams`, `/users`).
+collection (`/me/messages`, `/me/events`, `/me/drive/items`, `/teams`, `/users`). Each takes
+`user=` too, which turns `/me/...` into `/users/{user}/...` (it has no effect on `/teams` and
+`/users`).
 
 | Method | What it does | Returns |
 |---|---|---|
-| `list(**odata)` | Every item, page by page | async iterator |
-| `await get(item_id, **odata)` | One item | `dict` |
-| `await create(body)` | Create an item from raw Graph JSON | the created item |
-| `await update(item_id, body)` | Change fields | the updated item |
-| `await delete(item_id)` | Delete an item | `None` |
-| `await get_many(item_ids, select=None)` | Fetch many items in batches of 20, in the order given | list of results |
+| `list(user=None, **odata)` | Every item, page by page | async iterator |
+| `await get(item_id, user=None, **odata)` | One item | `dict` |
+| `await create(body, user=None)` | Create an item from raw Graph JSON | the created item |
+| `await update(item_id, body, user=None)` | Change fields | the updated item |
+| `await delete(item_id, user=None)` | Delete an item | `None` |
+| `await get_many(item_ids, select=None, user=None)` | Fetch many items in batches of 20, in the order given | list of results |
 
 ```python
 message = await graph.mail.get(message_id, select="subject,body")

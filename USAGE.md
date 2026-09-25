@@ -65,7 +65,8 @@ intended.
 |---|---|---|
 | Acting as | The application itself | A signed-in person |
 | Reach | **The whole tenant** | Only what that person can already do |
-| `/me`, `graph.mail`, `graph.calendar` | No — there is no user | Yes |
+| `/me` | No — there is no user | Yes |
+| `graph.mail`, `graph.calendar`, `graph.files` | Yes, passing `user="someone@example.com"` | Yes |
 | Human needed | No | Yes, at first sign-in |
 | Entra registration | Confidential client, holds a secret | Public client, holds none |
 | Constructor | `app_only`, `from_env` | `device_code`, `interactive` |

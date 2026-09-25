@@ -42,7 +42,11 @@ def _attendees(value: Attendees, kind: str = "required") -> List[Dict[str, Any]]
 
 
 class Calendar(GraphResource):
-    """Events on the signed-in user's calendar."""
+    """Events on a calendar: the signed-in person's, or ``user``'s.
+
+    Every method takes ``user`` (an id or mail address). Under application access there is no
+    signed-in person, so pass it: ``schedule(..., user="room.a@contoso.com")`` books that calendar.
+    """
 
     path = "/me/events"
     scopes = Scopes.CALENDARS_READ_WRITE
@@ -94,21 +98,32 @@ class Calendar(GraphResource):
 
         return event
 
-    async def schedule(self, **fields: Any) -> Dict[str, Any]:
-        """Create an event. Takes everything ``compose`` takes.
+    async def schedule(self, user: Optional[str] = None, **fields: Any) -> Dict[str, Any]:
+        """Create an event, on ``user``'s calendar when given. Takes everything ``compose`` takes.
 
-        With ``online=True`` the response carries ``onlineMeeting.joinUrl``.
+        The event shows as busy, which is what blocks the time. With ``online=True`` the response
+        carries ``onlineMeeting.joinUrl``.
         """
-        return await self.create(self.compose(**fields))
+        return await self.create(self.compose(**fields), user=user)
 
-    async def schedule_many(self, events: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Create many events in as few round-trips as Graph allows."""
-        requests = [{
-            "method": "POST",
-            "url": self.path,
-            "headers": {"Content-Type": "application/json"},
-            "body": self.compose(**fields),
-        } for fields in events]
+    async def schedule_many(
+        self, events: Sequence[Dict[str, Any]], user: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Create many events in as few round-trips as Graph allows.
+
+        Each entry is the keyword arguments ``compose`` takes, plus an optional ``user`` for that
+        one event's calendar; ``user`` here is the default for the rest.
+        """
+        requests = []
+        for fields in events:
+            fields = dict(fields)
+            owner = fields.pop("user", user)
+            requests.append({
+                "method": "POST",
+                "url": self._for(self.path, owner),
+                "headers": {"Content-Type": "application/json"},
+                "body": self.compose(**fields),
+            })
         return await self._client.batch(requests)
 
     # ── reading ──────────────────────────────────────────────────────────────
@@ -118,6 +133,7 @@ class Calendar(GraphResource):
         days: int = 7,
         select: str = "id,subject,start,end,location,onlineMeeting,organizer,attendees",
         top: int = 50,
+        user: Optional[str] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Events in the next ``days``, soonest first.
 
@@ -134,12 +150,13 @@ class Calendar(GraphResource):
         query["endDateTime"] = (now + timedelta(days=days)).isoformat(
             timespec="seconds").replace("+00:00", "Z")
 
-        return self._client.paged(build_url("/me/calendarView", None, query))
+        return self._client.paged(build_url(self._for("/me/calendarView", user), None, query))
 
     # ── responding ───────────────────────────────────────────────────────────
 
     async def respond(
-        self, event_id: str, response: str, comment: str = "", send_response: bool = True
+        self, event_id: str, response: str, comment: str = "", send_response: bool = True,
+        user: Optional[str] = None,
     ) -> None:
         """Accept, decline or tentatively accept an invitation."""
         if response not in _RESPONSES:
@@ -149,11 +166,11 @@ class Calendar(GraphResource):
         await self._action(event_id, response, {
             "comment": comment,
             "sendResponse": send_response,
-        })
+        }, user=user)
 
-    async def cancel(self, event_id: str, comment: str = "") -> None:
+    async def cancel(self, event_id: str, comment: str = "", user: Optional[str] = None) -> None:
         """Cancel a meeting you organise, notifying the attendees."""
-        await self._action(event_id, "cancel", {"comment": comment})
+        await self._action(event_id, "cancel", {"comment": comment}, user=user)
 
     # ── finding a slot ───────────────────────────────────────────────────────
 
@@ -163,6 +180,7 @@ class Calendar(GraphResource):
         duration_minutes: int = 30,
         within_days: int = 5,
         minimum_attendance_percent: int = 100,
+        user: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Ask Graph for slots that suit everyone. Returns the suggestions, best first."""
         now = datetime.now(timezone.utc)
@@ -178,11 +196,12 @@ class Calendar(GraphResource):
             "meetingDuration": f"PT{duration_minutes}M",
             "minimumAttendeePercentage": minimum_attendance_percent,
             "returnSuggestionReasons": True,
-        })
+        }, user=user)
         return (suggestions or {}).get("meetingTimeSuggestions", [])
 
     async def free_busy(
-        self, people: Iterable[str], start: datetime, end: datetime, interval_minutes: int = 30
+        self, people: Iterable[str], start: datetime, end: datetime, interval_minutes: int = 30,
+        user: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Each person's availability over a window."""
         schedules = await self._collection_action("calendar/getSchedule", {
@@ -190,5 +209,5 @@ class Calendar(GraphResource):
             "startTime": _graph_time(start, "UTC"),
             "endTime": _graph_time(end, "UTC"),
             "availabilityViewInterval": interval_minutes,
-        })
+        }, user=user)
         return (schedules or {}).get("value", [])

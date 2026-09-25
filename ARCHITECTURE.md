@@ -181,7 +181,7 @@ registrations**, because their permission sets, consent models and threat profil
 | Consent | Admin consent, once, tenant-wide | User consent, or admin tenant-wide |
 | Effective rights | Exactly the granted permissions, **across the whole tenant** | Intersection of the granted scopes **and** what that person can already do |
 | `/me` works | No — there is no user | Yes |
-| `graph.mail` / `graph.calendar` | No | Yes |
+| `graph.mail` / `graph.calendar` / `graph.files` | Yes, with `user=` naming the mailbox | Yes |
 | Scope requested | `https://graph.microsoft.com/.default` | Explicit: `User.Read`, `Mail.Send`, … |
 | Human needed | No | Yes, at first sign-in |
 | Client type | Confidential (holds a secret) | Public (holds no secret) |
@@ -409,10 +409,13 @@ boss = await graph.users.manager()
 `path` and `scopes` and adds what is specific to it. `get_many`, `send_many` and `schedule_many`
 route through §6.4, so the fast path is the default rather than something a caller has to discover.
 
-Resources are attached to the client as attributes (`graph.mail`, `graph.files`, …). Most are
-delegated-access features, because they hang off `/me`, which does not exist under
-application-level access. `Users` is the exception: it works under both, and its `user` arguments
-stop being optional when there is no signed-in person.
+Resources are attached to the client as attributes (`graph.mail`, `graph.files`, …). Their
+collections hang off `/me`, which does not exist under application-level access, so every method
+takes `user`: `GraphResource._for` turns `/me/...` into `/users/{user}/...` in one place, and
+leaving `user` out keeps `/me`. That is what lets an app send from a named mailbox or block a
+named calendar. `Users` was built this way first; its `_who` is now the same rule. The one gap is
+Teams: Graph does not let an app post channel or chat messages as a person, so those still need a
+signed-in person.
 
 > **A limit worth knowing rather than discovering.** Reading Teams channel messages with
 > *application* permissions is one of Graph's protected APIs — Microsoft must approve the app
@@ -505,7 +508,7 @@ Each is a decision, not an oversight. Each has a trigger.
 package's own. The seam is `httpx.MockTransport`, wrapped by the **real** `msgraph-core`
 middleware, so tests exercise the same retry and redirect path production does (D11).
 
-**188 tests at 94% line coverage**, in eight files:
+**203 tests at 94% line coverage**, in nine files:
 
 | File | Covers |
 |---|---|
@@ -517,6 +520,7 @@ middleware, so tests exercise the same retry and redirect path production does (
 | `test_signin.py` | The two-phase orchestration: the code returns without waiting; a sign-in that fails before issuing a code does not hang; cancellation; PKCE conformance; the verifier never appearing in the authorize URL; `state` mismatch |
 | `test_redirect_and_construction.py` | The parts of sign-in needing no tenant: the loopback listener against real sockets, the PKCE code exchange over a stubbed MSAL, and every way of building a client |
 | `test_errors_and_logging.py` | Graph error JSON → `GraphError`, `Retry-After` in both formats, chain flattening, the code table, and that no token, secret or header reaches a log line |
+| `test_for_user.py` | `user=` on every mail, calendar, files and Teams listing method: the `/users/{user}/...` path, per-message and per-event mailboxes in batches, a guest address surviving encoding, and that omitting `user` still means `/me` |
 
 **Live tests** need a tenant and are skipped without one, so a clean checkout never requires
 credentials to go green.

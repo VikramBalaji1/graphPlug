@@ -15,7 +15,6 @@ from __future__ import annotations
 from typing import Any, AsyncIterator, Dict, Optional
 
 from .._errors import GraphError
-from .._request import segment
 from .._scopes import Scopes
 from .base import GraphResource
 
@@ -40,9 +39,7 @@ class Users(GraphResource):
     @staticmethod
     def _who(user: Optional[str]) -> str:
         """``/me`` for the signed-in person, ``/users/{id}`` for anyone else."""
-        if user is None or user == "me":
-            return "/me"
-        return f"/users/{segment(user)}"
+        return GraphResource._for("/me", user)
 
     # ── the signed-in person ─────────────────────────────────────────────────
 

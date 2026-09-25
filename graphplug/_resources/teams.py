@@ -47,10 +47,11 @@ def _message(text: str, html: bool, subject: Optional[str], importance: str) -> 
 class Teams(GraphResource):
     """Teams, their channels, and the messages in both.
 
-    Delegated access only in practice. Reading channel messages with *application* permissions is
-    one of Graph's protected APIs: Microsoft has to approve the app first, and until they do the
-    call returns 403 no matter what consent the tenant has granted. Posting as a user works
-    normally.
+    Mostly delegated. Under application access, ``mine`` and ``chats`` take ``user`` to list
+    someone's teams and chats, but Graph does not let an app *post* channel or chat messages as a
+    person (outside data migration), so ``post``, ``reply`` and ``send_chat`` need a signed-in
+    person. Reading channel messages with application permissions is one of Graph's protected APIs:
+    Microsoft has to approve the app first, and until they do the call returns 403.
     """
 
     path = "/teams"
@@ -58,9 +59,11 @@ class Teams(GraphResource):
 
     # ── finding your way ─────────────────────────────────────────────────────
 
-    def mine(self, select: str = DEFAULT_FIELDS) -> AsyncIterator[Dict[str, Any]]:
-        """Teams the signed-in person belongs to."""
-        return self._client.paged("/me/joinedTeams", select=select)
+    def mine(
+        self, select: str = DEFAULT_FIELDS, user: Optional[str] = None
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Teams the signed-in person, or ``user``, belongs to."""
+        return self._client.paged(self._for("/me/joinedTeams", user), select=select)
 
     def channels(
         self, team_id: str, select: str = DEFAULT_FIELDS
@@ -127,13 +130,15 @@ class Teams(GraphResource):
 
     # ── chats ────────────────────────────────────────────────────────────────
 
-    def chats(self, select: str = "id,topic,chatType,lastUpdatedDateTime") -> AsyncIterator[Dict[str, Any]]:
-        """The signed-in person's chats.
+    def chats(
+        self, select: str = "id,topic,chatType,lastUpdatedDateTime", user: Optional[str] = None
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """The signed-in person's chats, or ``user``'s.
 
         Unordered: Graph sorts chats only by ``lastMessagePreview/createdDateTime``, and refuses
         ``$orderby`` on anything else.
         """
-        return self._client.paged("/me/chats", select=select)
+        return self._client.paged(self._for("/me/chats", user), select=select)
 
     async def send_chat(self, chat_id: str, message: str, html: bool = False) -> Dict[str, Any]:
         """Send a message into an existing chat.
