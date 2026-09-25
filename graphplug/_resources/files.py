@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Optional, Union
 
 from .._errors import GraphError
+from .._request import segment
 from .._scopes import Scopes
 from .base import GraphResource
 
@@ -48,11 +49,11 @@ class Files(GraphResource):
         if not item or not item.strip():
             raise GraphError(0, "invalidRequest", "'item' is required")
         if not item.startswith("/"):
-            return f"{DRIVE}/items/{item}"
+            return f"{DRIVE}/items/{segment(item)}"
         if item == "/":
             return f"{DRIVE}/root"
         # The closing colon is what separates the path from whatever follows it.
-        return f"{DRIVE}/root:{item.rstrip('/')}:"
+        return f"{DRIVE}/root:{segment(item.rstrip('/'))}:"
 
     # ── moving bytes ─────────────────────────────────────────────────────────
 
@@ -95,7 +96,7 @@ class Files(GraphResource):
         if not query:
             raise GraphError(0, "invalidRequest", "'query' is required")
         # Graph spells this one as a function on the path, not as $search.
-        escaped = query.replace("'", "''")
+        escaped = segment(query.replace("'", "''")).replace("/", "%2F")
         return self._client.paged(f"{DRIVE}/root/search(q='{escaped}')", select=select)
 
     async def metadata(self, item: str, select: str = DEFAULT_FIELDS) -> Dict[str, Any]:

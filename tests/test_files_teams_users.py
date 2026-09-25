@@ -375,5 +375,35 @@ class TeamNavigation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.code, "itemNotFound")
 
 
+class Encoding(unittest.IsolatedAsyncioTestCase):
+    """A ``#`` left raw starts a fragment, and the request silently goes somewhere else."""
+
+    async def test_a_drive_path_with_a_hash_is_encoded(self) -> None:
+        graph, rec, _ = make_client(json_response(200, {}))
+        async with graph:
+            await graph.files.metadata("/reports/Q3 #1.xlsx")
+        self.assertEqual(rec.last.url.raw_path.split(b"?")[0],
+                         b"/v1.0/me/drive/root:/reports/Q3%20%231.xlsx:")
+
+    async def test_a_guest_principal_name_is_encoded(self) -> None:
+        graph, rec, _ = make_client(json_response(200, {}))
+        async with graph:
+            await graph.users.manager("bob_x.com#EXT#@t.onmicrosoft.com")
+        self.assertEqual(rec.last.url.raw_path,
+                         b"/v1.0/users/bob_x.com%23EXT%23@t.onmicrosoft.com/manager")
+
+    async def test_a_search_term_cannot_break_out_of_the_path(self) -> None:
+        graph, rec, _ = make_client(json_response(200, {"value": []}))
+        async with graph:
+            [i async for i in graph.files.search("a #b?c/d")]
+        self.assertIn(b"search(q='a%20%23b%3Fc%2Fd')", rec.last.url.raw_path)
+
+    async def test_by_email_escapes_a_quote_in_the_address(self) -> None:
+        graph, rec, _ = make_client(json_response(200, {"value": [{"id": "u1"}]}))
+        async with graph:
+            await graph.users.by_email("o'brien@contoso.com")
+        self.assertEqual(query_of(rec.last)["$filter"], "mail eq 'o''brien@contoso.com'")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -129,8 +129,17 @@ class MailPayloads(unittest.IsolatedAsyncioTestCase):
 
         query = parse_qs(urlsplit(str(rec.last.url)).query)
         self.assertIn("/me/mailFolders/inbox/messages", str(rec.last.url))
-        self.assertEqual(query["$filter"], ["isRead eq false"])
+        # Graph answers InefficientFilter unless the $orderby property leads the $filter.
+        self.assertEqual(query["$filter"], ["receivedDateTime ge 1900-01-01T00:00:00Z and isRead eq false"])
         self.assertEqual(query["$orderby"], ["receivedDateTime desc"])
+
+    async def test_since_leads_the_filter_when_combined_with_unread(self) -> None:
+        graph, rec, _ = make_client(json_response(200, {"value": []}))
+        async with graph:
+            [m async for m in graph.mail.inbox(unread_only=True, since=datetime(2026, 1, 2, tzinfo=timezone.utc))]
+
+        query = parse_qs(urlsplit(str(rec.last.url)).query)
+        self.assertEqual(query["$filter"], ["receivedDateTime ge 2026-01-02T00:00:00Z and isRead eq false"])
 
     async def test_search_replaces_filter_because_graph_forbids_both(self) -> None:
         graph, rec, _ = make_client(json_response(200, {"value": []}))

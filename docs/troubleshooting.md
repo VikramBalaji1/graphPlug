@@ -35,8 +35,8 @@ codes are single-use and short-lived by design.
 ### `stateMismatch`
 
 The value the browser redirect carried did not match the one issued. Either two sign-ins are
-racing on the same redirect port, or something interfered with the redirect. It is validated in
-the core, not in Python, so this cannot be skipped by a caller.
+racing on the same redirect port, or something interfered with the redirect. It is validated
+inside `interactive()` rather than by the caller, so this check cannot be skipped.
 
 ### `interactionRequired`
 
@@ -54,7 +54,7 @@ privilege. Name what you need.
 
 ### `authenticationFailed`
 
-The catch-all. Read `e.message` — the AADSTS number is in there, because the core flattens the
+The catch-all. Read `e.message` — the AADSTS number is in there, because the package flattens the
 whole exception chain rather than reporting Azure.Identity's empty outer message. Usual causes:
 a wrong or expired client secret, the wrong tenant, or a client ID that does not exist.
 
@@ -89,7 +89,7 @@ constantly, fetch less: `select` only the fields you use, raise `top`, and batch
 
 ### `invalidRequest`: `'Authorization' may not be supplied`
 
-You passed an `Authorization` header. The core owns authentication, and accepting one would
+You passed an `Authorization` header. The client owns authentication, and accepting one would
 silently bypass the credential your client was built with. Remove it.
 
 ### `invalidHandle`
@@ -117,11 +117,14 @@ DNS, TLS or a connection reset — below Graph entirely. Check egress, proxies a
 
 ### `timeout`
 
-`timeoutMs` elapsed; the default is 100 seconds. Large uploads and downloads can legitimately
-exceed it:
+The HTTP client gave up: 30 seconds to connect, 100 seconds to read or write, which are
+msgraph-core's defaults. Large uploads already go in 10 MiB chunks, so each request stays well
+inside that; a timeout usually means a slow or congested link rather than a big file.
+
+There is no per-request timeout parameter (ARCHITECTURE.md §9). To bound a call yourself, wrap it:
 
 ```python
-g.upload(path, "big.zip", timeout_ms=600_000)
+await asyncio.wait_for(graph.files.upload("big.zip"), timeout=600)
 ```
 
 ---
@@ -130,7 +133,7 @@ g.upload(path, "big.zip", timeout_ms=600_000)
 
 ### `invalidRequest`: `the destination directory … does not exist`
 
-The core does not create directories. Make it yourself:
+The package does not create directories. Make it yourself:
 
 ```python
 Path(dest).parent.mkdir(parents=True, exist_ok=True)

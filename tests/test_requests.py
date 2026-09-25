@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 from _support import json_response, make_client
 
 from graphplug import GraphError
-from graphplug._request import build_url
+from graphplug._request import build_url, segment
 
 
 class UrlBuilding(unittest.TestCase):
@@ -231,6 +231,24 @@ class Errors(unittest.IsolatedAsyncioTestCase):
                 await graph.get("/users")
 
         self.assertEqual(str(raised.exception), "[403 accessDenied] no")
+
+
+class Encoding(unittest.TestCase):
+    def test_a_boolean_goes_on_the_wire_in_odata_case(self) -> None:
+        self.assertTrue(build_url("/users", None, {"$count": True}).endswith("?$count=true"))
+
+    def test_options_join_a_query_the_path_already_has(self) -> None:
+        self.assertEqual(build_url("/me/messages?$top=5", None, {"$select": "id"}),
+                         "https://graph.microsoft.com/v1.0/me/messages?$top=5&$select=id")
+
+    def test_a_url_inside_a_path_does_not_make_it_absolute(self) -> None:
+        path = "/me/drive/root/search(q='http://intranet')"
+        self.assertEqual(build_url(path), f"https://graph.microsoft.com/v1.0{path}")
+
+    def test_segment_encodes_what_would_end_the_path(self) -> None:
+        self.assertEqual(segment("bob_x.com#EXT#@t.onmicrosoft.com"),
+                         "bob_x.com%23EXT%23@t.onmicrosoft.com")
+        self.assertEqual(segment("/Q3 #1?.xlsx"), "/Q3%20%231%3F.xlsx")
 
 
 if __name__ == "__main__":

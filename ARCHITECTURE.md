@@ -341,6 +341,11 @@ Two behaviours belong to the package:
 Per-request failures inside a batch are **not** raised: one failing sub-request must not discard
 nineteen successful ones. The caller gets a list with each sub-response's own status.
 
+The same holds one level up. If a whole chunk fails -- a 429 after the retries run out, say --
+its requests come back in place with that chunk's status, and the chunks that ran are kept. With
+`send_many`, those mails have already gone; raising would hide that, and a caller retrying on the
+exception would send them twice. Only a batch in which every chunk failed raises.
+
 > **Known ceiling.** `dependsOn` chains are passed through but not validated across a chunk
 > boundary — a dependency spanning two chunks will fail at Graph. Worth fixing only if someone
 > actually uses ordered batches.
@@ -500,7 +505,7 @@ Each is a decision, not an oversight. Each has a trigger.
 package's own. The seam is `httpx.MockTransport`, wrapped by the **real** `msgraph-core`
 middleware, so tests exercise the same retry and redirect path production does (D11).
 
-**172 tests at 94% line coverage**, in eight files:
+**188 tests at 94% line coverage**, in eight files:
 
 | File | Covers |
 |---|---|

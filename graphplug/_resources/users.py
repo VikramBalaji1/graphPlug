@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any, AsyncIterator, Dict, Optional
 
 from .._errors import GraphError
+from .._request import segment
 from .._scopes import Scopes
 from .base import GraphResource
 
@@ -41,7 +42,7 @@ class Users(GraphResource):
         """``/me`` for the signed-in person, ``/users/{id}`` for anyone else."""
         if user is None or user == "me":
             return "/me"
-        return f"/users/{user}"
+        return f"/users/{segment(user)}"
 
     # ── the signed-in person ─────────────────────────────────────────────────
 
@@ -79,8 +80,9 @@ class Users(GraphResource):
         but not always the mail address. This filters on ``mail`` itself and raises if nobody
         matches, so a wrong answer is not silently returned.
         """
+        quoted = address.replace("'", "''")  # OData's escape; o'brien@ is a valid address
         page = await self._client.get(
-            self.path, filter=f"mail eq '{address}'", select=select, top=2
+            self.path, filter=f"mail eq '{quoted}'", select=select, top=2
         )
         found = (page or {}).get("value", [])
         if not found:

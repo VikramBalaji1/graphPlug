@@ -16,7 +16,7 @@ from typing import Any, AsyncIterator, Dict, List, Mapping, Optional, Sequence, 
 
 from ._errors import GraphError
 from ._http import Transport
-from ._request import build_url
+from ._request import allowlisted, build_url
 
 __all__ = [
     "paged", "batch", "download", "upload",
@@ -107,12 +107,30 @@ async def batch(
     responses = await asyncio.gather(*(
         transport.json("POST", url, body={"requests": chunk}, operation="batch")
         for chunk in chunks
-    ))
+    ), return_exceptions=True)
+
+    # A chunk that failed outright must not discard the chunks that ran -- with send_many, those
+    # mails have gone, and a caller who only saw an exception would send them twice. Its requests
+    # are reported in place like any failed sub-request. Only when nothing ran is it raised.
+    failures = [r for r in responses if isinstance(r, BaseException)]
+    if len(failures) == len(responses):
+        raise failures[0]
 
     merged: List[Dict[str, Any]] = []
     for chunk, envelope in zip(chunks, responses):
-        merged.extend(_ordered(chunk, (envelope.get("body") or {}).get("responses", [])))
+        if isinstance(envelope, GraphError):
+            merged.extend(_failed(chunk, envelope))
+        elif isinstance(envelope, BaseException):
+            raise envelope
+        else:
+            merged.extend(_ordered(chunk, (envelope.get("body") or {}).get("responses", [])))
     return merged
+
+
+def _failed(sent: Sequence[Mapping[str, Any]], error: GraphError) -> List[Dict[str, Any]]:
+    """One result per request in a chunk that never reached Graph, shaped like a sub-response."""
+    body = {"error": {"code": error.code, "message": error.message}}
+    return [{"id": str(item["id"]), "status": error.status, "body": body} for item in sent]
 
 
 def _ordered(sent: Sequence[Mapping[str, Any]], returned: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
@@ -131,12 +149,12 @@ async def download(transport: Transport, url: str, dest_path: str) -> Dict[str, 
     rather than RAM. The destination directory must already exist; this does not create it.
     """
     destination = Path(dest_path)
-    if destination.parent and not destination.parent.exists():
+    if not destination.parent.exists():
         raise GraphError(
             0, "invalidRequest", f"the destination directory '{destination.parent}' does not exist"
         )
 
-    response = await transport.send("GET", url, stream=True)
+    response = await transport.send("GET", url, stream=True, operation="download")
     try:
         if not response.is_success:
             await response.aread()
@@ -158,7 +176,6 @@ async def download(transport: Transport, url: str, dest_path: str) -> Dict[str, 
     finally:
         await response.aclose()
 
-    from ._request import allowlisted
     return {
         "status": response.status_code,
         "headers": allowlisted(response.headers),
@@ -215,6 +232,7 @@ async def _upload_simple(
         build_url(path, version),
         headers={"Content-Type": "application/octet-stream"},
         content=source.read_bytes(),
+        operation="upload",
     )
     return Transport.envelope(response)
 
@@ -240,7 +258,7 @@ async def _upload_chunked(
                 break
 
             last = await _put_chunk(transport, upload_url, chunk, offset, size)
-            if not last.is_success and last.status_code not in (200, 201, 202):
+            if not last.is_success:
                 return Transport.envelope(last)  # raises with the Graph error
 
             offset += len(chunk)
@@ -267,6 +285,7 @@ async def _put_chunk(transport: Transport, upload_url: str, chunk: bytes, offset
                 "Content-Type": "application/octet-stream",
             },
             content=chunk,
+            operation="upload",
         )
         if response.is_success or response.status_code not in (408, 429, 500, 502, 503, 504):
             return response

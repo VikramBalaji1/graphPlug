@@ -5,24 +5,29 @@ Ported from the C# core's `GraphUrlBuilder`, `ResponseHeaderFilter` and `GraphOp
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Mapping, Optional
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from ._errors import GraphError
 
-__all__ = ["build_url", "odata", "allowlisted", "reject_authorization", "DEFAULT_VERSION"]
+__all__ = ["build_url", "odata", "segment", "allowlisted", "reject_authorization", "DEFAULT_VERSION"]
 
 BASE_URL = "https://graph.microsoft.com"
 DEFAULT_VERSION = "v1.0"
 SUPPORTED_VERSIONS = (DEFAULT_VERSION, "beta")
 
-#: What tells a whole URL apart from a Graph path.
+#: What tells a whole URL apart from a Graph path: a scheme and ``://`` at the very start.
 #:
-#: Deliberately not ``urlsplit(path).scheme``, which is platform-dependent in exactly the wrong
-#: way: it reads "C:\\secrets" as scheme "c". A Graph path never contains a scheme separator; a URL
-#: always does. The equivalent check in the C# core was the fix for a bug that broke every request
-#: on Linux while passing on Windows.
-_SCHEME_SEPARATOR = "://"
+#: Deliberately not ``urlsplit(path).scheme``, which reads "C:\\secrets" as scheme "c". Anchored at
+#: the start because a Graph path may carry ``://`` further in -- a drive search for a URL, say.
+#: The equivalent check in the C# core was the fix for a bug that broke every request on Linux
+#: while passing on Windows.
+_ABSOLUTE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+
+#: Left alone when an id or a drive path goes into a URL path. Everything else -- ``#``, ``?``,
+#: ``%``, spaces -- is percent-encoded, or it would end the path early.
+_PATH_SAFE = "/:@=+$,!"
 
 #: OData parameters, spelled as Python keywords.
 ODATA_KEYWORDS = ("select", "filter", "top", "skip", "expand", "orderby", "search", "count")
@@ -65,7 +70,7 @@ def build_url(
     if not path or not path.strip():
         raise GraphError(0, "invalidRequest", "'path' is required")
 
-    if _SCHEME_SEPARATOR in path:
+    if _ABSOLUTE.match(path):
         if not path.lower().startswith("https://"):
             raise GraphError(0, "invalidRequest", "an absolute 'path' must use https")
         return path
@@ -76,8 +81,23 @@ def build_url(
 
     if query:
         # safe="$" keeps $select readable on the wire; Graph accepts either form.
-        url = f"{url}?{urlencode({k: str(v) for k, v in query.items()}, safe='$')}"
+        encoded = urlencode({k: _literal(v) for k, v in query.items()}, safe="$")
+        url = f"{url}{'&' if '?' in url else '?'}{encoded}"
     return url
+
+
+def _literal(value: Any) -> str:
+    """OData is case-sensitive about booleans: ``$count=true``, never ``True``."""
+    return str(value).lower() if isinstance(value, bool) else str(value)
+
+
+def segment(value: str) -> str:
+    """Percent-encode an id or drive path for use inside a URL path.
+
+    A guest's user principal name carries ``#EXT#`` and a file may be called ``Q3 #1.xlsx``.
+    Unencoded, the ``#`` starts a fragment and the request silently goes to a different path.
+    """
+    return quote(value, safe=_PATH_SAFE)
 
 
 def _resolve_version(version: Optional[str]) -> str:

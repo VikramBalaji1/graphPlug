@@ -53,8 +53,4 @@ class Scopes:
     @staticmethod
     def combine(*groups: Sequence[str]) -> Tuple[str, ...]:
         """Merge scope groups, keeping order and dropping duplicates."""
-        seen: dict = {}
-        for group in groups:
-            for scope in group:
-                seen[scope] = None
-        return tuple(seen)
+        return tuple(dict.fromkeys(scope for group in groups for scope in group))

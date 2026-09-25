@@ -177,7 +177,7 @@ class Logging(unittest.IsolatedAsyncioTestCase):
             captured = io.StringIO()
             with _log.capture(_log.INFO, captured):
                 await asyncio.sleep(0)
-                _log.event(name, handle=1)
+                _log.failure(name, "someCode", "a message")
                 await asyncio.sleep(0)
                 return captured.getvalue()
 
@@ -193,7 +193,7 @@ class Logging(unittest.IsolatedAsyncioTestCase):
                 raise OSError("stderr is gone")
 
         with _log.capture(_log.INFO, Broken()):
-            _log.event("sessionCreated", handle=1)  # must not raise
+            _log.failure("request", "someCode", "a message")  # must not raise
 
     def test_the_level_is_read_from_the_environment(self) -> None:
         cases = [(None, _log.OFF), ("", _log.OFF), ("off", _log.OFF), ("verbose", _log.OFF),

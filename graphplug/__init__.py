@@ -21,16 +21,15 @@ reference first, and a few guarantees the boundary enforces rather than asking y
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import os
 from types import TracebackType
 from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Type
 
-from . import _auth, _log, _operations
+from . import _auth, _operations
 from ._errors import GraphError
 from ._http import DEFAULT_MAX_CONCURRENCY, Transport
-from ._request import DEFAULT_VERSION, build_url, odata, reject_authorization
+from ._request import build_url, odata, reject_authorization
 from ._resources import Calendar, Files, Mail, Teams, Users
 from ._scopes import Scopes
 
@@ -169,6 +168,8 @@ class GraphClient:
         exist in azure-identity for every flow, the async one is easy to miss, and getting it wrong
         would otherwise fail at the first request with an error about an un-awaited coroutine
         rather than about the credential.
+
+        The credential stays yours: closing the client leaves it open, since it may be shared.
         """
         if credential is None or not callable(getattr(credential, "get_token", None)):
             raise GraphError(
@@ -183,6 +184,7 @@ class GraphClient:
             scopes or (_auth.DEFAULT_SCOPE,),
             max_concurrency=max_concurrency,
             client=_client,
+            owns_credential=False,
         ))
 
     # ── delegated access ─────────────────────────────────────────────────────
@@ -255,10 +257,13 @@ class GraphClient:
         url = _auth.authorization_url(
             tenant_id, client_id, scopes, redirect_uri, challenge, state, authority_host
         )
-        if not _auth.open_browser(url):
-            print(f"Open this URL to sign in:\n{url}")
 
-        redirect = await _auth.wait_for_redirect(redirect_uri, timeout_seconds)
+        def open_sign_in() -> None:
+            if not _auth.open_browser(url):
+                print(f"Open this URL to sign in:\n{url}")
+
+        # The browser opens only once the listener is bound, so a redirect cannot beat it.
+        redirect = await _auth.wait_for_redirect(redirect_uri, timeout_seconds, open_sign_in)
 
         if "error" in redirect:
             raise GraphError(

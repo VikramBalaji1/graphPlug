@@ -164,7 +164,7 @@ addresses. Headers, bodies and credential material are never logged.
 
 ```bash
 pip install -e .
-python -m unittest discover -s tests     # 172 tests
+python -m unittest discover -s tests     # 188 tests
 python -m build --wheel
 ```
 
@@ -174,7 +174,7 @@ No container, no compiler, no platform-specific build.
 
 ## Status
 
-The package is complete and tested. **172 tests at 94% line coverage**, covering the middleware
+The package is complete and tested. **188 tests at 94% line coverage**, covering the middleware
 contract, request construction, paging, batching, file round-trips, the exact paths and payloads
 all five resources build, the error taxonomy, concurrency bounds, the sign-in orchestration, the
 loopback redirect listener, the drive addressing rules and the logger.

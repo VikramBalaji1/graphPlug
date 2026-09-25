@@ -279,5 +279,46 @@ class Files(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.code, "invalidRequest")
 
 
+class PartialBatchFailure(unittest.IsolatedAsyncioTestCase):
+    async def test_a_failed_chunk_does_not_discard_the_chunks_that_ran(self) -> None:
+        # With send_many, the first twenty mails have gone. Raising would hide that, and a
+        # caller retrying on the exception would send them twice.
+        def answer(request: httpx.Request) -> httpx.Response:
+            sent = json.loads(request.content)["requests"]
+            if any(item["id"] == "20" for item in sent):
+                return json_response(400, {"error": {"code": "BadRequest", "message": "no"}})
+            return _echo_batch(request)
+
+        graph, rec, _ = make_client()
+        rec.answer = answer
+        async with graph:
+            results = await graph.batch([("GET", f"/users/{i}") for i in range(25)])
+
+        self.assertEqual([r["status"] for r in results], [200] * 20 + [400] * 5)
+        self.assertEqual(results[20]["id"], "20")
+        self.assertEqual(results[20]["body"]["error"]["code"], "BadRequest")
+
+    async def test_when_every_chunk_fails_it_raises(self) -> None:
+        graph, _, _ = make_client(json_response(400, {"error": {"code": "BadRequest"}}))
+        async with graph:
+            with self.assertRaises(GraphError) as raised:
+                await graph.batch([("GET", "/me")])
+        self.assertEqual(raised.exception.code, "BadRequest")
+
+
+class TransferErrors(unittest.IsolatedAsyncioTestCase):
+    async def test_a_network_failure_during_download_is_a_graph_error(self) -> None:
+        def unreachable(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("no route", request=request)
+
+        graph, rec, _ = make_client()
+        rec.answer = unreachable
+        with tempfile.TemporaryDirectory() as folder:
+            async with graph:
+                with self.assertRaises(GraphError) as raised:
+                    await graph.download("/me/drive/items/x/content", os.path.join(folder, "f"))
+        self.assertEqual(raised.exception.code, "transportError")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

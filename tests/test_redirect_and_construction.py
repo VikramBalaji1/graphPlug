@@ -182,7 +182,6 @@ class CodeExchange(unittest.IsolatedAsyncioTestCase):
         token = await credential.get_token("User.Read")
 
         self.assertEqual(token.token, "refreshed-token")
-        self.assertIsNone(await credential.close())
 
     async def test_a_cache_that_can_no_longer_refresh_says_to_sign_in_again(self) -> None:
         credential = await _auth.exchange_code(
@@ -329,6 +328,70 @@ class DeviceCodeConvenience(unittest.IsolatedAsyncioTestCase):
                     GraphClient.device_code("t", "c", ["User.Read"]), timeout=5
                 )
         self.assertEqual(raised.exception.code, "signInDeclined")
+
+
+class CredentialOwnership(unittest.IsolatedAsyncioTestCase):
+    async def test_a_credential_passed_in_is_left_open_for_its_owner(self) -> None:
+        class Shared(FakeCredential):
+            closed = False
+
+            async def close(self) -> None:
+                self.closed = True
+
+        shared = Shared()
+        async with GraphClient.from_credential(shared):
+            pass
+        self.assertFalse(shared.closed, "the caller may still be using it")
+
+
+class ListenerTiming(unittest.IsolatedAsyncioTestCase):
+    async def test_the_browser_opens_only_once_the_port_is_listening(self) -> None:
+        port = free_port()
+        reachable = []
+
+        def on_listening() -> None:
+            with socket.socket() as probe:
+                reachable.append(probe.connect_ex(("127.0.0.1", port)) == 0)
+
+        listening = asyncio.create_task(
+            _auth.wait_for_redirect(f"http://localhost:{port}", 10, on_listening)
+        )
+        await get_once(f"http://127.0.0.1:{port}/?code=c&state=s")
+        await asyncio.wait_for(listening, timeout=5)
+        self.assertEqual(reachable, [True])
+
+    async def test_a_silent_preconnect_does_not_swallow_the_redirect(self) -> None:
+        self.addCleanup(setattr, _auth._RedirectHandler, "timeout", _auth._RedirectHandler.timeout)
+        _auth._RedirectHandler.timeout = 0.2
+        port = free_port()
+        listening = asyncio.create_task(_auth.wait_for_redirect(f"http://localhost:{port}", 10))
+
+        idle = socket.socket()
+        self.addCleanup(idle.close)
+        for _ in range(100):  # connect once bound, then say nothing, as a browser preconnect does
+            if idle.connect_ex(("127.0.0.1", port)) == 0:
+                break
+            await asyncio.sleep(0.02)
+
+        await get_once(f"http://127.0.0.1:{port}/?code=c&state=s")
+        self.assertEqual((await asyncio.wait_for(listening, timeout=5))["code"], "c")
+
+    async def test_an_abandoned_listener_releases_its_port(self) -> None:
+        port = free_port()
+        listening = asyncio.create_task(_auth.wait_for_redirect(f"http://localhost:{port}", 60))
+        await asyncio.sleep(0.1)
+        listening.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await listening
+
+        for _ in range(50):
+            with socket.socket() as again:
+                try:
+                    again.bind(("127.0.0.1", port))
+                    return
+                except OSError:
+                    await asyncio.sleep(0.05)
+        self.fail("the port was never released")
 
 
 if __name__ == "__main__":

@@ -6,9 +6,14 @@ same strings, deliberately: they are what callers branch on and what the documen
 
 from __future__ import annotations
 
+import asyncio
 import email.utils
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional
+
+import httpx
+
+from . import _log
 
 __all__ = ["GraphError", "from_response", "code_for_exception", "code_for_text", "flatten"]
 
@@ -144,11 +149,15 @@ def code_for_exception(exception: BaseException) -> str:
     if matched:
         return matched
 
-    name = type(exception).__name__
-    if name in ("TimeoutException", "ConnectTimeout", "ReadTimeout", "PoolTimeout", "TimeoutError"):
+    if isinstance(exception, (httpx.TimeoutException, TimeoutError, asyncio.TimeoutError)):
         return "timeout"
-    if name in ("ConnectError", "ReadError", "WriteError", "NetworkError", "TransportError"):
+    if isinstance(exception, httpx.TransportError):
         return "transportError"
+
+    name = type(exception).__name__
+    if name == "AuthenticationRequiredError":
+        # azure-identity's word for a session that needs the person back.
+        return "interactionRequired"
     if "Authentication" in name or "Credential" in name or "AADSTS" in text:
         return "authenticationFailed"
     if isinstance(exception, (ValueError, TypeError, KeyError)):
@@ -163,7 +172,5 @@ def as_graph_error(exception: BaseException, operation: str) -> GraphError:
 
     code = code_for_exception(exception)
     message = flatten(exception)
-
-    from . import _log
     _log.failure(operation, code, message)
     return GraphError(0, code, message)

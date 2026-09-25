@@ -204,11 +204,12 @@ class Pkce(unittest.TestCase):
 
 class BrowserFlowGuards(unittest.IsolatedAsyncioTestCase):
     async def test_a_mismatched_state_is_refused_before_any_exchange(self) -> None:
-        async def redirect(_uri, _timeout):
+        async def redirect(_uri, _timeout, on_listening=None):
             return {"code": "the-code", "state": "not-the-one-issued"}
 
         original = _auth.wait_for_redirect
         _auth.wait_for_redirect = redirect
+        self.addCleanup(setattr, _auth, "open_browser", _auth.open_browser)
         _auth.open_browser = lambda _url: True
         try:
             with self.assertRaises(GraphError) as raised:
@@ -219,11 +220,12 @@ class BrowserFlowGuards(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.code, "stateMismatch")
 
     async def test_an_error_in_the_redirect_is_reported(self) -> None:
-        async def redirect(_uri, _timeout):
+        async def redirect(_uri, _timeout, on_listening=None):
             return {"error": "access_denied", "error_description": "user said no"}
 
         original = _auth.wait_for_redirect
         _auth.wait_for_redirect = redirect
+        self.addCleanup(setattr, _auth, "open_browser", _auth.open_browser)
         _auth.open_browser = lambda _url: True
         try:
             with self.assertRaises(GraphError) as raised:

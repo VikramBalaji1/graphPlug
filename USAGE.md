@@ -534,7 +534,7 @@ try:
     await graph.get("/users/nope")
 except GraphError as e:
     e.status        # HTTP status, or 0 when there was no response at all
-    e.code          # "itemNotFound", or a core code such as "timeout"
+    e.code          # "itemNotFound", or a package code such as "timeout"
     e.message
     e.request_id    # quote this to Microsoft support
     e.retry_after   # seconds, when Graph said so

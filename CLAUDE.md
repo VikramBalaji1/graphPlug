@@ -11,7 +11,7 @@ ARCHITECTURE.md documents the current design and why each rule is what it is.
 
 ## Tech Stack
 
-* Python 3.9+, async throughout
+* Python 3.10+, async throughout
 * azure-identity (credentials)
 * msgraph-core (the supported middleware pipeline)
 * unittest with IsolatedAsyncioTestCase, and httpx.MockTransport as the seam

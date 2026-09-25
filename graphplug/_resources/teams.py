@@ -128,8 +128,12 @@ class Teams(GraphResource):
     # ── chats ────────────────────────────────────────────────────────────────
 
     def chats(self, select: str = "id,topic,chatType,lastUpdatedDateTime") -> AsyncIterator[Dict[str, Any]]:
-        """The signed-in person's chats, most recently updated first."""
-        return self._client.paged("/me/chats", select=select, orderby="lastUpdatedDateTime desc")
+        """The signed-in person's chats.
+
+        Unordered: Graph sorts chats only by ``lastMessagePreview/createdDateTime``, and refuses
+        ``$orderby`` on anything else.
+        """
+        return self._client.paged("/me/chats", select=select)
 
     async def send_chat(self, chat_id: str, message: str, html: bool = False) -> Dict[str, Any]:
         """Send a message into an existing chat.

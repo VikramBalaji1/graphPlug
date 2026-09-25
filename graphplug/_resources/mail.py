@@ -8,7 +8,6 @@ JSON become one call.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import mimetypes
 from datetime import datetime, timezone
@@ -16,6 +15,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Sequence, Union
 
 from .._errors import GraphError
+from .._request import segment
 from .._scopes import Scopes
 from .base import GraphResource
 
@@ -163,12 +163,16 @@ class Mail(GraphResource):
         """Walk the inbox newest first, narrowed however you like."""
         options: Dict[str, Any] = {"select": select, "top": top}
 
+        # Graph refuses $orderby on a property that does not also lead $filter (InefficientFilter),
+        # so receivedDateTime comes first, and is bounded by nothing when there is no `since`.
         filters = []
-        if unread_only:
-            filters.append("isRead eq false")
         if since is not None:
             moment = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
             filters.append(f"receivedDateTime ge {moment.astimezone(timezone.utc):%Y-%m-%dT%H:%M:%SZ}")
+        if unread_only:
+            if not filters:
+                filters.append("receivedDateTime ge 1900-01-01T00:00:00Z")
+            filters.append("isRead eq false")
         if filters:
             options["filter"] = " and ".join(filters)
 
@@ -188,5 +192,5 @@ class Mail(GraphResource):
         return await self._action(message_id, "move", {"destinationId": folder})
 
     async def delete_many(self, message_ids: Sequence[str]) -> List[Dict[str, Any]]:
-        requests = [{"method": "DELETE", "url": f"{self.path}/{i}"} for i in message_ids]
+        requests = [{"method": "DELETE", "url": f"{self.path}/{segment(i)}"} for i in message_ids]
         return await self._client.batch(requests)

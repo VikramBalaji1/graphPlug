@@ -27,8 +27,6 @@ GRAPH_HOST = "graph.microsoft.com"
 #: than Python's. Going wider earns 429s, not throughput.
 DEFAULT_MAX_CONCURRENCY = 12
 
-_RETRYABLE_HINT = "activityLimitReached"
-
 
 class Transport:
     """One authenticated HTTP session over Microsoft's middleware pipeline."""
@@ -39,11 +37,13 @@ class Transport:
         scopes: Sequence[str],
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
         client: Optional[httpx.AsyncClient] = None,
+        owns_credential: bool = True,
     ) -> None:
         self._credential = credential
+        # A credential the caller handed in is the caller's to close; it may be shared.
+        self._owns_credential = owns_credential
         self._scopes = tuple(scopes)
         self._gate = asyncio.Semaphore(max_concurrency)
-        self.max_concurrency = max_concurrency
 
         # A caller-supplied client is the test seam: pass one built on httpx.MockTransport and the
         # middleware still wraps it, so tests exercise the real pipeline.
@@ -60,11 +60,32 @@ class Transport:
         json_body: Any = None,
         content: Optional[bytes] = None,
         stream: bool = False,
+        operation: str = "request",
     ) -> httpx.Response:
-        """Issue one request through the pipeline, with the token attached if the host allows it."""
+        """Issue one request through the pipeline, with the token attached if the host allows it.
+
+        Anything that fails before a response exists -- the credential, DNS, TLS, a timeout --
+        is raised as a ``GraphError`` here, so every caller gets the one error shape.
+        """
         if self._closed:
             raise GraphError(0, "invalidHandle", "this client has already been closed")
 
+        try:
+            return await self._send(method, url, headers, json_body, content, stream)
+        except GraphError:
+            raise
+        except Exception as exception:
+            raise as_graph_error(exception, operation) from exception
+
+    async def _send(
+        self,
+        method: str,
+        url: str,
+        headers: Optional[Mapping[str, str]],
+        json_body: Any,
+        content: Optional[bytes],
+        stream: bool,
+    ) -> httpx.Response:
         request = self._client.build_request(
             method, url, headers=dict(headers or {}), json=json_body, content=content
         )
@@ -122,13 +143,7 @@ class Transport:
         operation: str = "request",
     ) -> Dict[str, Any]:
         """Send, then return the envelope: status, allow-listed headers, body, next link."""
-        try:
-            response = await self.send(method, url, headers=headers, json_body=body)
-        except GraphError:
-            raise
-        except Exception as exception:
-            raise as_graph_error(exception, operation) from exception
-
+        response = await self.send(method, url, headers=headers, json_body=body, operation=operation)
         return self.envelope(response)
 
     @staticmethod
@@ -155,7 +170,7 @@ class Transport:
         if not self._closed:
             self._closed = True
             await self._client.aclose()
-            closer = getattr(self._credential, "close", None)
+            closer = getattr(self._credential, "close", None) if self._owns_credential else None
             if closer is not None:
                 result = closer()
                 if asyncio.iscoroutine(result):

@@ -11,15 +11,17 @@ import asyncio
 import base64
 import hashlib
 import secrets
+import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Callable, Dict, Optional, Sequence
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from azure.core.credentials import AccessToken
 from azure.identity.aio import ClientSecretCredential
 
-from ._errors import GraphError, as_graph_error
+from ._errors import GraphError, as_graph_error, code_for_text
 
 __all__ = [
     "app_only_credential",
@@ -102,6 +104,9 @@ class _DeviceCodeSignIn:
             client_id=client_id,
             tenant_id=tenant_id,
             prompt_callback=self._on_code,
+            # Once signed in, a session that can no longer refresh must fail as
+            # interactionRequired -- not start a second device code nobody is shown.
+            disable_automatic_authentication=True,
             **options,
         )
 
@@ -256,15 +261,10 @@ async def exchange_code(
 
     if "access_token" not in result:
         detail = result.get("error_description") or result.get("error") or "sign-in failed"
-        raise GraphError(0, _msal_code(detail), detail)
+        # Anything unrecognised is still a sign-in failure.
+        raise GraphError(0, code_for_text(detail) or "authenticationFailed", detail)
 
     return _MsalCredential(application, result, tuple(scopes))
-
-
-def _msal_code(detail: str) -> str:
-    """Classify MSAL's error string. Anything unrecognised is still a sign-in failure."""
-    from ._errors import code_for_text
-    return code_for_text(detail) or "authenticationFailed"
 
 
 class _MsalCredential:
@@ -277,8 +277,6 @@ class _MsalCredential:
     def __init__(self, application: Any, result: Dict[str, Any], scopes: Sequence[str]) -> None:
         self._application = application
         self._scopes = list(scopes)
-        self._account = result.get("id_token_claims") and application.get_accounts()
-        self._last = result
 
     async def get_token(self, *scopes: str, **_: Any) -> AccessToken:
         wanted = list(scopes) or self._scopes
@@ -292,11 +290,7 @@ class _MsalCredential:
                 "interactionRequired",
                 "the signed-in session can no longer be refreshed; sign in again",
             )
-        import time as _time
-        return AccessToken(result["access_token"], int(_time.time()) + int(result.get("expires_in", 3600)))
-
-    async def close(self) -> None:
-        return None
+        return AccessToken(result["access_token"], int(time.time()) + int(result.get("expires_in", 3600)))
 
 
 # ── the loopback redirect listener ───────────────────────────────────────────
@@ -311,6 +305,8 @@ _PAGE = b"""<!doctype html>
 
 class _RedirectHandler(BaseHTTPRequestHandler):
     received: Optional[Dict[str, str]] = None
+    #: Seconds to wait for a request line on an accepted connection.
+    timeout = 5
 
     def do_GET(self) -> None:  # noqa: N802 - the name is fixed by BaseHTTPRequestHandler
         query = parse_qs(urlsplit(self.path).query)
@@ -334,24 +330,59 @@ def open_browser(url: str) -> bool:
         return False
 
 
-async def wait_for_redirect(redirect_uri: str, timeout_seconds: float) -> Dict[str, str]:
-    """Serve exactly one request on the redirect URI's port and return its query parameters.
+async def wait_for_redirect(
+    redirect_uri: str,
+    timeout_seconds: float,
+    on_listening: Optional[Callable[[], None]] = None,
+) -> Dict[str, str]:
+    """Serve the redirect URI's port until a request arrives, and return its query parameters.
 
-    Binds to loopback only, whatever host the redirect URI names.
+    Binds to loopback only, whatever host the redirect URI names. ``on_listening`` runs once the
+    socket is bound -- open the browser there, or a fast single sign-on redirect can arrive
+    before anything is listening.
     """
     port = urlsplit(redirect_uri).port
     if port is None:
         raise GraphError(0, "invalidRequest", f"the redirect URI {redirect_uri!r} must name a port")
 
-    def serve() -> Optional[Dict[str, str]]:
-        _RedirectHandler.received = None
-        with HTTPServer(("127.0.0.1", port), _RedirectHandler) as server:
-            server.timeout = timeout_seconds
-            server.handle_request()
-        received, _RedirectHandler.received = _RedirectHandler.received, None
-        return received
+    try:
+        server = HTTPServer(("127.0.0.1", port), _RedirectHandler)
+    except OSError as exception:
+        raise GraphError(
+            0, "invalidRequest", f"cannot listen on port {port} for the redirect: {exception}"
+        ) from exception
+    deadline = time.monotonic() + timeout_seconds
+    abandoned = threading.Event()
 
-    received = await asyncio.to_thread(serve)
+    def serve() -> Optional[Dict[str, str]]:
+        # A browser may open a speculative connection and send nothing on it. The handler's
+        # read timeout drops it, and the loop goes back to waiting for the real redirect.
+        try:
+            while _RedirectHandler.received is None and not abandoned.is_set():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                # Short slices: a worker thread cannot be cancelled, so it checks back often and
+                # an abandoned sign-in releases the port within half a second.
+                server.timeout = min(remaining, 0.5)
+                server.handle_request()
+            return _RedirectHandler.received
+        finally:
+            _RedirectHandler.received = None
+            server.server_close()
+
+    _RedirectHandler.received = None
+    try:
+        if on_listening is not None:
+            on_listening()
+    except BaseException:
+        server.server_close()
+        raise
+
+    try:
+        received = await asyncio.to_thread(serve)
+    finally:
+        abandoned.set()
     if received is None:
         raise GraphError(
             0, "signInTimeout", f"no redirect arrived on {redirect_uri} within {timeout_seconds:.0f}s"

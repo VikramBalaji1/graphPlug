@@ -18,7 +18,7 @@ import sys
 from typing import Any, Dict, Iterator, Optional, TextIO
 from urllib.parse import urlsplit
 
-__all__ = ["LEVEL_VARIABLE", "capture", "is_enabled", "parse_level", "request", "event", "failure"]
+__all__ = ["LEVEL_VARIABLE", "capture", "is_enabled", "parse_level", "request", "failure"]
 
 LEVEL_VARIABLE = "GRAPHPLUG_LOG_LEVEL"
 
@@ -96,12 +96,6 @@ def request(
         "requestId": request_id,
         "errorCode": error_code,
     })
-
-
-def event(name: str, **fields: Any) -> None:
-    """A lifecycle event. Callers pass only scalars they have chosen to expose."""
-    if is_enabled(INFO):
-        _write(INFO, {"event": name, **fields})
 
 
 def failure(operation: str, code: str, message: str) -> None:
