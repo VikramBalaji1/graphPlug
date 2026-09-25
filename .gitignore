@@ -12,6 +12,7 @@ venv/
 .env
 *.pfx
 *.pem
+*.pub
 
 # Coverage output, when measuring locally.
 .coverage
@@ -22,9 +23,3 @@ graphify-out/
 
 # claude working files
 .claude/
-
-#env vars
-.env
-
-#keys
-*.pub
