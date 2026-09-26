@@ -223,6 +223,7 @@ async with GraphClient.from_env() as graph:
 | `attendees` | Required attendees: one address, or a list |
 | `optional_attendees` | Optional attendees: one address, or a list |
 | `online` | `True` to add a Teams meeting link |
+| `auto_record` | `True` to have Teams start recording when the meeting begins (needs `online=True`) |
 
 Leave both attendee lists out and the event is a private block in `user`'s calendar. To get the
 join link, event id and other details back from `schedule`, see
@@ -230,7 +231,8 @@ join link, event id and other details back from `schedule`, see
 
 **Set-up in Entra.** Add **application** permissions to the app registration and grant admin
 consent: `Mail.Send` to send, `Mail.ReadWrite` to read and tidy mail, `Calendars.ReadWrite` for
-calendars, `Files.ReadWrite.All` for OneDrive, and `OnlineMeetings.Read.All` if you need a Teams
+calendars, `Files.ReadWrite.All` for OneDrive, `OnlineMeetings.ReadWrite.All` for `auto_record=True`, and
+`OnlineMeetings.Read.All` if you only need to read a Teams
 meeting's numeric ID and passcode. These reach **every mailbox in the tenant**, so in
 Exchange Online restrict the app to the mailboxes it needs with RBAC for Applications (or an
 application access policy).
@@ -373,6 +375,7 @@ which is what blocks the time.
 | `reminder_minutes` | `int` | `None` | Reminder before start |
 | `all_day` | `bool` | `False` | All-day event (use midnight-to-midnight times) |
 | `user` | `str` | `None` | Whose calendar to book; the signed-in person when omitted |
+| `auto_record` | `bool` | `False` | Start the Teams recording automatically; needs `online=True` (see below) |
 
 ```python
 from datetime import datetime, timedelta, timezone
@@ -442,6 +445,47 @@ await graph.calendar.cancel(event_id, comment="Postponed", user=MY_MAILBOX)
 ```
 
 To see everything Graph returned: `import json; print(json.dumps(event, indent=2))`.
+
+### Recording automatically
+
+```python
+event = await graph.calendar.schedule(
+    subject="Design review", start=start, end=start + timedelta(hours=1),
+    attendees=["alice@yourcompany.com"], online=True,
+    auto_record=True,
+    user=MY_MAILBOX,
+)
+```
+
+Recording belongs to the Teams meeting, not the calendar event, so `schedule` makes two more calls
+after creating the event: it finds the Teams meeting by its join link and sets
+`recordAutomatically`. It needs:
+
+| Access | Permission | Also |
+|---|---|---|
+| Application | `OnlineMeetings.ReadWrite.All` (application, admin-consented) | A Teams **application access policy** granting the app access to the organiser (`New-CsApplicationAccessPolicy`, then `Grant-CsApplicationAccessPolicy`); without it Graph answers 403 |
+| Delegated | `Scopes.ONLINE_MEETINGS_READ_WRITE` (`OnlineMeetings.ReadWrite`) | None |
+
+The organiser also needs a licence that allows recording, and the tenant's Teams meeting policy
+must allow cloud recording.
+
+If the recording step fails, the meeting has already been created and the invitations have gone.
+The `GraphError` says so and includes the event id, so you can retry or cancel it rather than
+creating a duplicate.
+
+### No invitation mail?
+
+`schedule` sends the event with its `attendees`, and Exchange sends the invitations itself from the
+organiser's mailbox. graphplug does not send a separate mail. If nobody receives one:
+
+| Check | Why |
+|---|---|
+| Did you pass `attendees=` or `optional_attendees=`? | Without attendees the event is a private block and there is nobody to invite |
+| Are you looking in the organiser's inbox? | The organiser gets no invitation; the meeting just appears in their calendar |
+| Is `user=` a real mailbox, not a room or resource? | A room is booked, not an organiser; organise from a person's mailbox and add the room as an attendee |
+| Look in the attendee's calendar | Invitations to people in the same organisation often land in the calendar as tentative at the same moment the mail arrives; check Junk too |
+| External attendees | The tenant's outbound rules or the recipient's spam filter may hold them |
+| `print(event["attendees"])` | Confirms Graph stored the attendees you expected |
 
 **The numeric Teams meeting ID and passcode** (the ones printed in the invitation) are not on the
 calendar event. They belong to Teams' own meeting record, looked up by the join link:

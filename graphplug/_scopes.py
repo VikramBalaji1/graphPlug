@@ -27,6 +27,8 @@ class Scopes:
     # Calendar
     CALENDARS_READ: Tuple[str, ...] = ("Calendars.Read",)
     CALENDARS_READ_WRITE: Tuple[str, ...] = ("Calendars.ReadWrite",)
+    #: Needed by ``schedule(..., auto_record=True)``, which updates the Teams meeting.
+    ONLINE_MEETINGS_READ_WRITE: Tuple[str, ...] = ("OnlineMeetings.ReadWrite",)
 
     # Files
     FILES_READ: Tuple[str, ...] = ("Files.Read",)

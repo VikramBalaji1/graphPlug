@@ -98,13 +98,69 @@ class Calendar(GraphResource):
 
         return event
 
-    async def schedule(self, user: Optional[str] = None, **fields: Any) -> Dict[str, Any]:
+    async def schedule(
+        self, user: Optional[str] = None, auto_record: bool = False, **fields: Any
+    ) -> Dict[str, Any]:
         """Create an event, on ``user``'s calendar when given. Takes everything ``compose`` takes.
 
-        The event shows as busy, which is what blocks the time. With ``online=True`` the response
-        carries ``onlineMeeting.joinUrl``.
+        The event shows as busy, which is what blocks the time, and Exchange sends the invitations
+        to its attendees from the organiser's mailbox. With ``online=True`` the response carries
+        ``onlineMeeting.joinUrl``.
+
+        ``auto_record=True`` (requires ``online=True``) makes Teams start recording when the
+        meeting begins. Recording is a property of the Teams meeting, not of the calendar event,
+        so it is set with a second call after the event exists; see ``_record_automatically``.
         """
-        return await self.create(self.compose(**fields), user=user)
+        if auto_record and not fields.get("online"):
+            raise GraphError(0, "invalidRequest", "'auto_record' needs 'online=True'")
+
+        event = await self.create(self.compose(**fields), user=user)
+        if auto_record:
+            event = await self._record_automatically(event, user)
+        return event
+
+    async def _record_automatically(
+        self, event: Dict[str, Any], user: Optional[str]
+    ) -> Dict[str, Any]:
+        """Turn on ``recordAutomatically`` on the Teams meeting behind a calendar event.
+
+        The event only carries the join link, so the Teams meeting is found by it and then
+        patched. Teams can fill the join link a moment after the event is created, so the event is
+        re-read once if it is missing. If this step fails the event already exists and invitations
+        have gone, so the error says so and names the event rather than hiding it.
+        """
+        owner = self._for("/me", user)
+        try:
+            join_url = (event.get("onlineMeeting") or {}).get("joinUrl")
+            if not join_url:
+                event = await self.get(event["id"], user=user)
+                join_url = (event.get("onlineMeeting") or {}).get("joinUrl")
+            if not join_url:
+                raise GraphError(0, "itemNotFound", "the event has no Teams join link yet")
+
+            quoted = join_url.replace("'", "''")
+            found = await self._client.get(
+                f"{owner}/onlineMeetings", filter=f"JoinWebUrl eq '{quoted}'"
+            )
+            meetings = (found or {}).get("value") or []
+            if not meetings:
+                raise GraphError(0, "itemNotFound", "no Teams meeting matches the join link")
+
+            await self._client.patch(
+                f"{owner}/onlineMeetings/{meetings[0]['id']}",
+                body={"recordAutomatically": True},
+            )
+        except GraphError as error:
+            raise GraphError(
+                error.status,
+                error.code,
+                f"the meeting was created (event id {event.get('id')}) but auto-record could not "
+                f"be turned on: {error.message}",
+                request_id=error.request_id,
+                retry_after=error.retry_after,
+                inner=error.inner,
+            ) from error
+        return event
 
     async def schedule_many(
         self, events: Sequence[Dict[str, Any]], user: Optional[str] = None
